@@ -44,6 +44,11 @@ else:
         label_cond = Y.float()
         print(f'rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  gnorm: {ctx["gnorm"]:.2e}  '
               f'maxp: {Y.max(1)[0].mean():.4f}')
+    elif args.label_mode == 'probe':
+        Y, ctx = solve_labels_probe(H_L, h, Y_L, args.gamma, args.ce_steps)
+        label_cond = Y.float()
+        print(f'rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  gnorm: {ctx["gnorm"]:.2e}  '
+              f'maxp: {Y.max(1)[0].mean():.4f}')
     else:
         label_cond = onehot_labels(args, h, H_L, y_L, assign, y_pool, tr_pool)
     n_pool = len(H_pool)

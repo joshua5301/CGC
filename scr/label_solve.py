@@ -151,3 +151,27 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200):
     ctx = {'loss': loss.item(), 'gnorm': Y.grad.norm().item(),
            'rank': int(torch.linalg.matrix_rank(Hp)), 'gamma': g.item()}
     return F.softmax(Y.detach(), dim=1), ctx
+
+
+def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200):
+    H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
+    m, d = H_L.shape
+    g = gamma * (H_L * H_L).sum() / (m * d)
+    y = Y_L.argmax(1)
+
+    W = torch.zeros(d, Y_L.shape[1], dtype=H_L.dtype, device=H_L.device, requires_grad=True)
+    opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=1e-10,
+                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+
+    def closure():
+        opt.zero_grad()
+        loss = F.cross_entropy(H_L @ W, y) + 0.5 * g * (W ** 2).sum()
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    with torch.enable_grad():
+        loss = closure()
+    ctx = {'loss': loss.item(), 'gnorm': W.grad.norm().item(),
+           'rank': int(torch.linalg.matrix_rank(Hp)), 'gamma': g.item()}
+    return F.softmax(Hp @ W.detach(), dim=1), ctx
