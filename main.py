@@ -30,27 +30,30 @@ if args.landmark == 'cgc':
     h = torch.spmm(M_norm.to(args.device), H_aug.to(args.device))
     n_pool = len(H_aug)
 else:
-    H_L, y_L = H[args.conv_depth][data.train_mask], data.y[data.train_mask]
-    H_pool, y_pool, tr_pool = select_pool(args, data, H[args.conv_depth])
-    h, assign = generate_landmarks(args, H_pool, y_pool)
-    Y_L = F.one_hot(y_L, args.num_class).to(h.dtype)
+    depths = [H[i] for i in range(args.conv_depth + 1)]
+    H_pool, y_pool, tr_pool, pool_d = select_pool(args, data, H[args.conv_depth], depths)
+    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
+
+    y_L = data.y[data.train_mask]
+    H_L = label_feats(args.label_feat, [D[data.train_mask] for D in depths])
+    hl = label_feats(args.label_feat, h_d)
+    Y_L = F.one_hot(y_L, args.num_class).to(hl.dtype)
+
     if args.label_mode == 'closed':
-        Y, ctx = solve_labels(H_L, h, Y_L, args.beta, args.gamma)
+        Y, ctx = solve_labels(H_L, hl, Y_L, args.beta, args.gamma)
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
-        print(f'rank: {ctx["rank"]}  rho: {rho:.4f}')
-    elif args.label_mode == 'logistic':
-        Y, ctx = solve_labels_logistic(H_L, h, Y_L, args.beta, args.gamma, args.ce_steps)
+        print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
+    elif args.label_mode in ('logistic', 'probe'):
+        if args.label_mode == 'logistic':
+            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps)
+        else:
+            Y, ctx = solve_labels_probe(H_L, hl, Y_L, args.gamma, args.ce_steps)
         label_cond = Y.float()
-        print(f'rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  gnorm: {ctx["gnorm"]:.2e}  '
-              f'maxp: {Y.max(1)[0].mean():.4f}')
-    elif args.label_mode == 'probe':
-        Y, ctx = solve_labels_probe(H_L, h, Y_L, args.gamma, args.ce_steps)
-        label_cond = Y.float()
-        print(f'rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  gnorm: {ctx["gnorm"]:.2e}  '
-              f'maxp: {Y.max(1)[0].mean():.4f}')
+        print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
+              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}')
     else:
-        label_cond = onehot_labels(args, h, H_L, y_L, assign, y_pool, tr_pool)
+        label_cond = onehot_labels(args, hl, H_L, y_L, assign, y_pool, tr_pool)
     n_pool = len(H_pool)
 
 label_cond = label_cond.to(args.device)

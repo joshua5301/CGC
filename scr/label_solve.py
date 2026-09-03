@@ -64,7 +64,7 @@ def constrain(ctx, Y, prior, mode):
     return Yc, (_sq_norm_A(ctx, Yc - Y) / abs(_objective(ctx, Y))).item()
 
 
-def select_pool(args, data, H):
+def select_pool(args, data, H, extra=()):
     if args.h_pool == 'train':
         mask = data.train_mask
     elif args.h_pool == 'all':
@@ -75,7 +75,7 @@ def select_pool(args, data, H):
             mask = torch.ones(len(H), dtype=torch.bool, device=H.device)
         else:
             mask = data.train_mask | ~(held | data.test_mask)
-    return H[mask], data.y[mask], data.train_mask[mask]
+    return H[mask], data.y[mask], data.train_mask[mask], [E[mask] for E in extra]
 
 
 def _cluster_means(H, assign, k):
@@ -96,21 +96,30 @@ def _assign(H, k, method):
     return torch.from_numpy(np.ascontiguousarray(labels)).long()
 
 
-def generate_landmarks(args, H_pool, y_pool):
+def generate_landmarks(args, H_pool, y_pool, extra=()):
     n_p = int(args.budget)
     if args.landmark == 'random':
         idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
-        return H_pool[idx], None
+        return H_pool[idx], None, [E[idx] for E in extra]
     if args.landmark == 'class_kmeans':
-        assign = torch.zeros(len(H_pool), dtype=torch.long)
-        row = 0
+        assign, k = torch.zeros(len(H_pool), dtype=torch.long), 0
         for cls in range(args.num_class):
             m = (y_pool == cls)
-            assign[m.cpu()] = _assign(H_pool[m], args.budget_cla[cls], args.clustering) + row
-            row += int(args.budget_cla[cls])
-        return _cluster_means(H_pool, assign, row)
-    method = 'nocluster' if args.landmark == 'random_split' else args.clustering
-    return _cluster_means(H_pool, _assign(H_pool, n_p, method), n_p)
+            assign[m.cpu()] = _assign(H_pool[m], args.budget_cla[cls], args.clustering) + k
+            k += int(args.budget_cla[cls])
+    else:
+        method = 'nocluster' if args.landmark == 'random_split' else args.clustering
+        assign, k = _assign(H_pool, n_p, method), n_p
+    h, remap = _cluster_means(H_pool, assign, k)
+    return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
+
+
+def label_feats(mode, mats):
+    if mode == 'last':
+        return mats[-1]
+    if mode == 'mean':
+        return sum(mats) / len(mats)
+    return torch.cat(mats, dim=1)
 
 
 def onehot_labels(args, Hp, H_L, y_L, assign, y_pool, tr):
