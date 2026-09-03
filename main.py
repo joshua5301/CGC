@@ -33,12 +33,17 @@ else:
     H_L, y_L = H[args.conv_depth][data.train_mask], data.y[data.train_mask]
     H_pool, y_pool, tr_pool = select_pool(args, data, H[args.conv_depth])
     h, assign = generate_landmarks(args, H_pool, y_pool)
+    Y_L = F.one_hot(y_L, args.num_class).to(h.dtype)
     if args.label_mode == 'closed':
-        Y_L = F.one_hot(y_L, args.num_class).to(h.dtype)
         Y, ctx = solve_labels(H_L, h, Y_L, args.beta, args.gamma)
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'rank: {ctx["rank"]}  rho: {rho:.4f}')
+    elif args.label_mode == 'logistic':
+        Y, ctx = solve_labels_logistic(H_L, h, Y_L, args.beta, args.gamma, args.ce_steps)
+        label_cond = Y.float()
+        print(f'rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  gnorm: {ctx["gnorm"]:.2e}  '
+              f'maxp: {Y.max(1)[0].mean():.4f}')
     else:
         label_cond = onehot_labels(args, h, H_L, y_L, assign, y_pool, tr_pool)
     n_pool = len(H_pool)

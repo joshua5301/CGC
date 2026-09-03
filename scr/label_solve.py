@@ -122,3 +122,32 @@ def onehot_labels(args, Hp, H_L, y_L, assign, y_pool, tr):
     fallback = (F.normalize(Hp, dim=1) @ F.normalize(centroid, dim=1).T).argmax(1)
     empty = votes.sum(1) == 0
     return torch.where(empty, fallback, votes.argmax(1)).long()
+
+
+def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200):
+    H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
+    m, n_p = H_L.shape[0], Hp.shape[0]
+    eye = torch.eye(n_p, dtype=Hp.dtype, device=Hp.device)
+
+    Kss = Hp @ Hp.T
+    R = torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye)
+    M = (H_L @ Hp.T) @ R
+    g = gamma * (M * M).sum() / (m * n_p)
+    y = Y_L.argmax(1)
+
+    Y = torch.zeros(n_p, Y_L.shape[1], dtype=Hp.dtype, device=Hp.device, requires_grad=True)
+    opt = torch.optim.LBFGS([Y], max_iter=steps, history_size=20, tolerance_grad=1e-10,
+                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+
+    def closure():
+        opt.zero_grad()
+        loss = F.cross_entropy(M @ Y, y) + 0.5 * g * (Y ** 2).sum()
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    with torch.enable_grad():
+        loss = closure()
+    ctx = {'loss': loss.item(), 'gnorm': Y.grad.norm().item(),
+           'rank': int(torch.linalg.matrix_rank(Hp)), 'gamma': g.item()}
+    return F.softmax(Y.detach(), dim=1), ctx
