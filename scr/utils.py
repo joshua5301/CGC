@@ -361,6 +361,12 @@ def normalize_adj_tensor(adj):
     return mx
 
 
+def soft_loss(log_prob, Y, head):
+    if head == 'mse':
+        return F.mse_loss(log_prob.exp(), Y)
+    return -(Y * log_prob).sum(1).mean()
+
+
 def model_training(model, args, data, graph, data_val=None, data_test=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val_acc = test_acc = 0
@@ -371,7 +377,8 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
 
         model.train()
         output = model(graph)
-        loss = F.nll_loss(output[graph.train_mask], graph.y[graph.train_mask])
+        out, y = output[graph.train_mask], graph.y[graph.train_mask]
+        loss = F.nll_loss(out, y) if y.dim() == 1 else soft_loss(out, y, args.head)
 
         optimizer.zero_grad()
         loss.backward()
@@ -462,6 +469,13 @@ def result_record(args, ALL_ACCs):
         "adj_T:" f"{args.adj_T}",
         "alpha:" f"{args.alpha}",
         "tau:" f"{args.tau}",
-        "aug_ratio:" f"{args.aug_ratio}",   
+        "aug_ratio:" f"{args.aug_ratio}",
+        "landmark:" f"{args.landmark}",
+        "label_mode:" f"{args.label_mode}",
+        "h_pool:" f"{args.h_pool}",
+        "beta:" f"{args.beta}",
+        "gamma:" f"{args.gamma}",
+        "constraint:" f"{args.constraint}",
+        "head:" f"{args.head}",
          f"{ALL_ACC[0]:.1f}",
          f"{ALL_ACC[0]:.1f}+{ALL_ACC[1]:.1f}"])

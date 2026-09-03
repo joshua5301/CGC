@@ -29,6 +29,15 @@ def para():
     parser.add_argument('--tau', type=float, default=10, help='the denoising ratio')
     parser.add_argument('--aug_ratio', type=float, default=0.55, help='the augmentation ratio')
 
+    parser.add_argument('--landmark', type=str, default='cgc',
+                        help='cgc, class_kmeans, kmeans, random, random_split')
+    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed')
+    parser.add_argument('--h_pool', type=str, default='train', help='train, all, train_unlabeled')
+    parser.add_argument('--beta', type=float, default=1e-2)
+    parser.add_argument('--gamma', type=float, default=1e-2)
+    parser.add_argument('--constraint', type=str, default='none', help='none, balance, row, simplex')
+    parser.add_argument('--head', type=str, default='mse', help='ce, mse')
+
     args = parser.parse_args()
     return args
 
