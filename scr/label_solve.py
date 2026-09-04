@@ -103,6 +103,38 @@ def constrain(ctx, Y, prior, mode):
     return Yc, (_sq_norm_A(ctx, Yc - Y) / abs(_objective(ctx, Y))).item()
 
 
+def pool_mask(args, data, n, device):
+    if args.h_pool == 'train':
+        return data.train_mask
+    if args.h_pool == 'all':
+        return torch.ones(n, dtype=torch.bool, device=device)
+    held = getattr(data, 'val_mask', None)
+    if held is None:
+        return torch.ones(n, dtype=torch.bool, device=device)
+    return data.train_mask | ~(held | data.test_mask)
+
+
+def coarsen_adj(edge_index, edge_weight, mask, assign, k):
+    dev = assign.device
+    n2l = torch.full((mask.shape[0],), -1, dtype=torch.long, device=dev)
+    n2l[mask.to(dev)] = assign
+    r, c = n2l[edge_index[0].to(dev)], n2l[edge_index[1].to(dev)]
+    ok = (r >= 0) & (c >= 0) & (r != c)
+    w = torch.ones(int(ok.sum()), device=dev) if edge_weight is None else edge_weight.to(dev)[ok]
+    A = torch.zeros(k, k, device=dev).index_put_((r[ok], c[ok]), w, accumulate=True)
+    A = (A + A.T) / 2
+    A.fill_diagonal_(0)
+    return A
+
+
+def commutation_residual(a_norm, h_d):
+    out, z = [], h_d[0]
+    for k in range(1, len(h_d)):
+        z = a_norm @ z
+        out.append((z - h_d[k]).norm().item() / h_d[k].norm().clamp(min=1e-30).item())
+    return out
+
+
 def select_pool(args, data, H, extra=()):
     if args.h_pool == 'train':
         mask = data.train_mask

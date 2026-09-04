@@ -63,8 +63,24 @@ else:
 
 label_cond = label_cond.to(args.device)
 if args.generate_adj == 1:
-    a = get_adj(h, args.adj_T)
-    x = get_feature(a, h, args.alpha)
+    if args.adj_mode == 'coarsen':
+        if args.landmark == 'cgc' or assign is None:
+            raise SystemExit('adj_mode=coarsen needs a cluster assignment '
+                             '(--landmark kmeans/class_kmeans/random_split)')
+        pm = pool_mask(args, data, len(data.y), args.device)
+        a = coarsen_adj(data.edge_index, getattr(data, 'edge_attr', None), pm, assign, len(h))
+    else:
+        a = get_adj(h, args.adj_T)
+    if args.cond_feat == 'raw':
+        x = h_d[0]
+    elif args.cond_feat == 'prop':
+        x = h
+    else:
+        x = get_feature(a, h, args.alpha)
+    if args.landmark != 'cgc':
+        res = commutation_residual(normalize_adj_tensor(a), [x] + h_d[1:])
+        print('commute resid: ' + '  '.join(f'k={i+1}:{r:.4f}' for i, r in enumerate(res))
+              + f'   #edges: {int((a > 0).sum())}')
     graph = Data(x=x, y=label_cond, edge_index=a.nonzero().t(), edge_attr=a[a.nonzero()[:,0], a.nonzero()[:,1]], train_mask=torch.ones(len(x), dtype=torch.bool))
 else:
     graph = Data(x=h, y=label_cond, edge_index=torch.eye(len(h)).nonzero().t(), edge_attr=torch.ones(len(h)), train_mask=torch.ones(len(h), dtype=torch.bool))

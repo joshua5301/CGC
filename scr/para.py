@@ -35,6 +35,8 @@ def para():
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='last, mean, concat')
     parser.add_argument('--label_prior', type=str, default='none', help='none, cluster')
+    parser.add_argument('--adj_mode', type=str, default='cosine', help='cosine, coarsen')
+    parser.add_argument('--cond_feat', type=str, default='solve', help='solve, prop, raw')
     parser.add_argument('--whiten', type=float, default=0.0, help='0=none, 1=full; clustering metric only')
     parser.add_argument('--label_kernel', type=str, default='linear', help='linear, erf, arccos, rbf')
     parser.add_argument('--h_pool', type=str, default='train', help='train, all, train_unlabeled')
