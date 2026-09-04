@@ -129,6 +129,19 @@ def _cluster_means(H, assign, k):
     return acc[keep] / cnt[keep].unsqueeze(1), remap[assign]
 
 
+def _whiten(H, alpha, rtol=1e-7):
+    if alpha <= 0:
+        return H
+    m, d = H.shape
+    Hc = (H - H.mean(0, keepdim=True)).double()
+    S, Vh = torch.linalg.svd(Hc, full_matrices=False)[1:]
+    r = min(m - 1, d)
+    keep = torch.zeros_like(S, dtype=torch.bool)
+    keep[:r] = S[:r] > rtol * S[0]
+    T = (Vh[keep].T * (S[keep] / max(m - 1, 1) ** 0.5).pow(-alpha)).to(H.dtype)
+    return (H - H.mean(0, keepdim=True)) @ T
+
+
 def _assign(H, k, method):
     from scr.utils import clustering_fast
     labels = clustering_fast(H.cpu().numpy().astype('float32'), int(k), method)
@@ -140,15 +153,16 @@ def generate_landmarks(args, H_pool, y_pool, extra=()):
     if args.landmark == 'random':
         idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
         return H_pool[idx], None, [E[idx] for E in extra]
+    Hw = _whiten(H_pool, getattr(args, 'whiten', 0.0))
     if args.landmark == 'class_kmeans':
         assign, k = torch.zeros(len(H_pool), dtype=torch.long), 0
         for cls in range(args.num_class):
             m = (y_pool == cls)
-            assign[m.cpu()] = _assign(H_pool[m], args.budget_cla[cls], args.clustering) + k
+            assign[m.cpu()] = _assign(Hw[m], args.budget_cla[cls], args.clustering) + k
             k += int(args.budget_cla[cls])
     else:
         method = 'nocluster' if args.landmark == 'random_split' else args.clustering
-        assign, k = _assign(H_pool, n_p, method), n_p
+        assign, k = _assign(Hw, n_p, method), n_p
     h, remap = _cluster_means(H_pool, assign, k)
     return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
 
