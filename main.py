@@ -35,12 +35,20 @@ else:
     h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
 
     y_L = data.y[data.train_mask]
-    H_L = label_feats(args.label_feat, [D[data.train_mask] for D in depths])
+    H_all = label_feats(args.label_feat, depths)
+    H_L = H_all[data.train_mask]
     hl = label_feats(args.label_feat, h_d)
     Y_L = F.one_hot(y_L, args.num_class).to(hl.dtype)
+    H_fit, T_fit = H_L, Y_L
+    if args.teacher == 'probe':
+        fm = data.train_mask if args.distill_pool == 'train' else             torch.ones(len(H_all), dtype=torch.bool, device=H_all.device)
+        H_fit = H_all[fm]
+        T_fit = teacher_targets(H_fit, H_L, Y_L, args.teacher_gamma, args.teacher_temp).to(hl.dtype)
+        print(f'teacher: fit {len(H_fit)} nodes  T={args.teacher_temp}  '
+              f'maxp_teacher {T_fit.max(1)[0].mean():.4f}')
 
     if args.label_mode == 'closed':
-        Y, ctx = solve_labels(H_L, hl, Y_L, args.beta, args.gamma, args.label_kernel)
+        Y, ctx = solve_labels(H_fit, hl, T_fit, args.beta, args.gamma, args.label_kernel)
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
@@ -50,10 +58,10 @@ else:
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
                                   torch.float64, hl.device)
         if args.label_mode == 'logistic':
-            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps,
-                                          prior, args.label_kernel)
+            Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
+                                           args.ce_steps, prior, args.label_kernel)
         else:
-            Y, ctx = solve_labels_probe(H_L, hl, Y_L, args.gamma, args.ce_steps)
+            Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
               f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}')
@@ -63,12 +71,15 @@ else:
 
 label_cond = label_cond.to(args.device)
 if args.generate_adj == 1:
-    if args.adj_mode == 'coarsen':
+    if args.adj_mode in ('coarsen', 'commute'):
         if args.landmark == 'cgc' or assign is None:
-            raise SystemExit('adj_mode=coarsen needs a cluster assignment '
+            raise SystemExit('adj_mode needs a cluster assignment '
                              '(--landmark kmeans/class_kmeans/random_split)')
         pm = pool_mask(args, data, len(data.y), args.device)
         a = coarsen_adj(data.edge_index, getattr(data, 'edge_attr', None), pm, assign, len(h))
+        if args.adj_mode == 'commute':
+            a = commute_adj(h_d, args.conv_depth, args.adj_steps, args.adj_lr, args.adj_l1,
+                            a if args.adj_init == 'coarsen' else None).float()
     else:
         a = get_adj(h, args.adj_T)
     if args.cond_feat == 'raw':
@@ -95,9 +106,12 @@ args.changed_label = n_pool-data.train_mask.sum().item()
 
 # model training
 graph=graph.to(args.device)
-acc= []
-for repeat in range(args.repeat): 
-    model = GCN(data.num_features, args.n_dim, args.num_class, 2, args.dropout).to(args.device)
-    args.test_gnn = model.__class__.__name__
-    acc.append(model_training(model, args, data, graph, data_val, data_test))
-result_record(args, acc)
+ARCHS = ['gcn', 'sage', 'gat', 'cheby', 'appnp'] if args.test_gnn == 'all'     else [k.strip().lower() for k in args.test_gnn.split(',') if k.strip()]
+for arch in ARCHS:
+    acc = []
+    for repeat in range(args.repeat):
+        model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout).to(args.device)
+        acc.append(model_training(model, args, data, graph, data_val, data_test))
+    args.test_gnn = arch
+    print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
+    result_record(args, acc)

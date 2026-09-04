@@ -13,7 +13,8 @@ def para():
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n_dim', type=int, default=256)
-    parser.add_argument('--test_gnn', type=str, default="GCN")
+    parser.add_argument('--test_gnn', type=str, default="gcn",
+                        help='gcn, sage, gat, cheby, appnp, or comma list / "all"')
     parser.add_argument('--test_gnn_idx', type=int, default=0)
 
     parser.add_argument('--kernel', type=str, default="gcn", help='gcn, ppr, heat, cheby, sage')
@@ -34,8 +35,17 @@ def para():
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='last, mean, concat')
+    parser.add_argument('--teacher', type=str, default='none', help='none, probe')
+    parser.add_argument('--teacher_temp', type=float, default=1.0)
+    parser.add_argument('--teacher_gamma', type=float, default=1e-2)
+    parser.add_argument('--distill_pool', type=str, default='train', help='train, all')
     parser.add_argument('--label_prior', type=str, default='none', help='none, cluster')
-    parser.add_argument('--adj_mode', type=str, default='cosine', help='cosine, coarsen')
+    parser.add_argument('--preset', type=str, default='', help="'unified' sets the P-based pipeline")
+    parser.add_argument('--adj_mode', type=str, default='cosine', help='cosine, coarsen, commute')
+    parser.add_argument('--adj_steps', type=int, default=300)
+    parser.add_argument('--adj_lr', type=float, default=0.05)
+    parser.add_argument('--adj_l1', type=float, default=0.0)
+    parser.add_argument('--adj_init', type=str, default='zeros', help='zeros, coarsen')
     parser.add_argument('--cond_feat', type=str, default='solve', help='solve, prop, raw')
     parser.add_argument('--whiten', type=float, default=0.0, help='0=none, 1=full; clustering metric only')
     parser.add_argument('--label_kernel', type=str, default='linear', help='linear, erf, arccos, rbf')
@@ -46,6 +56,10 @@ def para():
     parser.add_argument('--head', type=str, default='mse', help='ce, mse')
 
     args = parser.parse_args()
+    if args.preset == 'unified':
+        args.landmark, args.h_pool = 'kmeans', 'all'
+        args.generate_adj, args.adj_mode, args.cond_feat = 1, 'commute', 'raw'
+        args.label_mode, args.head = 'probe', 'ce'
     return args
 
 

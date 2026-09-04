@@ -127,6 +127,38 @@ def coarsen_adj(edge_index, edge_weight, mask, assign, k):
     return A
 
 
+def _norm_adj(A, eye):
+    mx = A + eye
+    r = mx.sum(1).clamp(min=1e-12).pow(-0.5)
+    return r.unsqueeze(1) * mx * r.unsqueeze(0)
+
+
+def commute_adj(h_d, K=2, steps=300, lr=0.05, l1=0.0, init=None):
+    B = h_d[0].double()
+    tgt = [t.double() for t in h_d[1:1 + K]]
+    n = B.shape[0]
+    eye = torch.eye(n, dtype=B.dtype, device=B.device)
+    A = (torch.zeros(n, n, dtype=B.dtype, device=B.device) if init is None
+         else init.double().clone())
+    A = A.clamp(min=0)
+    A.fill_diagonal_(0)
+    A.requires_grad_(True)
+    opt = torch.optim.Adam([A], lr=lr)
+    scale = sum(float(t.pow(2).sum()) for t in tgt)
+    for _ in range(steps):
+        opt.zero_grad()
+        S, z, loss = _norm_adj(A, eye), B, 0.0
+        for t in tgt:
+            z = S @ z
+            loss = loss + (z - t).pow(2).sum()
+        (loss / scale + l1 * A.abs().sum() / max(n * n, 1)).backward()
+        opt.step()
+        with torch.no_grad():
+            A.data = ((A.data + A.data.T) / 2).clamp(min=0)
+            A.data.fill_diagonal_(0)
+    return A.detach()
+
+
 def commutation_residual(a_norm, h_d):
     out, z = [], h_d[0]
     for k in range(1, len(h_d)):
@@ -184,7 +216,10 @@ def generate_landmarks(args, H_pool, y_pool, extra=()):
     n_p = int(args.budget)
     if args.landmark == 'random':
         idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
-        return H_pool[idx], None, [E[idx] for E in extra]
+        Hw = _whiten(H_pool, getattr(args, 'whiten', 0.0))
+        assign = torch.cdist(Hw, Hw[idx]).argmin(1)
+        assign[idx] = torch.arange(len(idx), device=assign.device)
+        return H_pool[idx], assign, [E[idx] for E in extra]
     Hw = _whiten(H_pool, getattr(args, 'whiten', 0.0))
     if args.landmark == 'class_kmeans':
         assign, k = torch.zeros(len(H_pool), dtype=torch.long), 0
@@ -255,9 +290,34 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
     M, rank = _design(H_L, Hp, beta, n_p, kind)
     g = gamma * (M * M).sum() / (m * n_p)
-    Y, loss, gnorm = _fit_logistic(M, Y_L.argmax(1), g, n_p, c, steps, prior)
+    Y, loss, gnorm = _fit_logistic(M, Y_L, g, n_p, c, steps, prior)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': g.item()}
     return F.softmax(Y, dim=1), ctx
+
+
+def fit_probe_W(H_L, Y_L, gamma, steps=200):
+    H_L, Y_L = H_L.double(), Y_L.double()
+    m, d = H_L.shape
+    g = gamma * (H_L * H_L).sum() / (m * d)
+    W = torch.zeros(d, Y_L.shape[1], dtype=H_L.dtype, device=H_L.device, requires_grad=True)
+    opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=1e-10,
+                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+
+    def closure():
+        opt.zero_grad()
+        loss = F.cross_entropy(H_L @ W, Y_L) + 0.5 * g * (W ** 2).sum()
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    with torch.enable_grad():
+        loss = closure()
+    return W.detach(), loss.item(), W.grad.norm().item()
+
+
+def teacher_targets(H_fit, H_L, Y_L, gamma, temp, steps=200):
+    W, _, _ = fit_probe_W(H_L, Y_L, gamma, steps)
+    return F.softmax(H_fit.double() @ W / max(temp, 1e-6), dim=1)
 
 
 def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200):
