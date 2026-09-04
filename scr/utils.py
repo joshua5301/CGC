@@ -182,6 +182,7 @@ def normalize_sparse_tensor(adj, fill_value=1):
 
 def mask_generation_conf(H, y, args, method, conf):
     budgets = args.budget_cla
+    H, y, conf = H.cpu(), y.cpu(), conf.cpu()
     idx = torch.arange(len(H))
     indices = torch.LongTensor().new_empty((0, 2))
     values = torch.FloatTensor() 

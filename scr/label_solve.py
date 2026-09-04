@@ -1,13 +1,47 @@
+import math
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 
-def _design(H_L, Hp, beta, eye, n_p):
+def _kernel(A, B, kind, d, bw=None):
+    if kind == 'linear':
+        return A @ B.T
+    if kind == 'erf':
+        S = (A @ B.T) / (d * bw)
+        a = (A * A).sum(1, keepdim=True) / (d * bw)
+        b = (B * B).sum(1).unsqueeze(0) / (d * bw)
+        r = 2 * S / torch.sqrt((1 + 2 * a) * (1 + 2 * b))
+        return (2 / math.pi) * torch.asin(r.clamp(-1 + 1e-12, 1 - 1e-12))
+    if kind == 'arccos':
+        na = A.norm(dim=1, keepdim=True).clamp(min=1e-12)
+        nb = B.norm(dim=1).unsqueeze(0).clamp(min=1e-12)
+        th = torch.acos(((A @ B.T) / (na * nb)).clamp(-1 + 1e-12, 1 - 1e-12))
+        return (na * nb) / (math.pi * d) * (torch.sin(th) + (math.pi - th) * torch.cos(th))
+    if kind == 'rbf':
+        D2 = ((A * A).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (A @ B.T))
+        return torch.exp(-D2.clamp(min=0) / (2 * bw))
+    raise ValueError(kind)
+
+
+def _design(H_L, Hp, beta, n_p, kind='linear'):
+    d = H_L.shape[1]
+    bw = None
+    if kind == 'erf':
+        bw = ((Hp * Hp).sum(1).mean() / d).clamp(min=1e-12)
+    if kind == 'rbf':
+        D2 = ((Hp * Hp).sum(1, keepdim=True) + (Hp * Hp).sum(1).unsqueeze(0) - 2 * (Hp @ Hp.T))
+        bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
+    if kind == 'linear' and beta <= 0:
+        return H_L @ torch.linalg.pinv(Hp), int(torch.linalg.matrix_rank(Hp))
+    Kts = _kernel(H_L, Hp, kind, d, bw)
+    Kss = _kernel(Hp, Hp, kind, d, bw)
+    rank = int(torch.linalg.matrix_rank(Kss))
     if beta <= 0:
-        return H_L @ torch.linalg.pinv(Hp)
-    Kss = Hp @ Hp.T
-    return (H_L @ Hp.T) @ torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye)
+        return Kts @ torch.linalg.pinv(Kss), rank
+    eye = torch.eye(n_p, dtype=Kss.dtype, device=Kss.device)
+    return Kts @ torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye), rank
 
 
 def _ainv(ctx, B):
@@ -22,19 +56,19 @@ def _objective(ctx, Y):
     return (((ctx['M'] @ Y - ctx['Y_L']) ** 2).sum() + ctx['gamma'] * (Y ** 2).sum()).item()
 
 
-def solve_labels(H_L, Hp, Y_L, beta, gamma):
+def solve_labels(H_L, Hp, Y_L, beta, gamma, kind='linear'):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     n_p = Hp.shape[0]
     eye = torch.eye(n_p, dtype=Hp.dtype, device=Hp.device)
 
-    M = _design(H_L, Hp, beta, eye, n_p)
+    M, rank = _design(H_L, Hp, beta, n_p, kind)
 
     MtM = M.T @ M
     g = gamma * MtM.diagonal().sum() / n_p
     A = MtM + g * eye
 
     ctx = {'A': A, 'M': M, 'Y_L': Y_L, 'gamma': g,
-           'rank': int(torch.linalg.matrix_rank(Hp))}
+           'rank': rank}
     return torch.linalg.solve(A, M.T @ Y_L), ctx
 
 
@@ -170,14 +204,13 @@ def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
     return p - p.mean(1, keepdim=True)
 
 
-def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None):
+def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear'):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
-    M = _design(H_L, Hp, beta, torch.eye(n_p, dtype=Hp.dtype, device=Hp.device), n_p)
+    M, rank = _design(H_L, Hp, beta, n_p, kind)
     g = gamma * (M * M).sum() / (m * n_p)
     Y, loss, gnorm = _fit_logistic(M, Y_L.argmax(1), g, n_p, c, steps, prior)
-    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(torch.linalg.matrix_rank(Hp)),
-           'gamma': g.item()}
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': g.item()}
     return F.softmax(Y, dim=1), ctx
 
 

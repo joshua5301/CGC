@@ -40,7 +40,7 @@ else:
     Y_L = F.one_hot(y_L, args.num_class).to(hl.dtype)
 
     if args.label_mode == 'closed':
-        Y, ctx = solve_labels(H_L, hl, Y_L, args.beta, args.gamma)
+        Y, ctx = solve_labels(H_L, hl, Y_L, args.beta, args.gamma, args.label_kernel)
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
@@ -50,7 +50,8 @@ else:
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
                                   torch.float64, hl.device)
         if args.label_mode == 'logistic':
-            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps, prior)
+            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps,
+                                          prior, args.label_kernel)
         else:
             Y, ctx = solve_labels_probe(H_L, hl, Y_L, args.gamma, args.ce_steps)
         label_cond = Y.float()
