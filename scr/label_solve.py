@@ -37,11 +37,11 @@ def _design(H_L, Hp, beta, n_p, kind='linear'):
         return H_L @ torch.linalg.pinv(Hp), int(torch.linalg.matrix_rank(Hp))
     Kts = _kernel(H_L, Hp, kind, d, bw)
     Kss = _kernel(Hp, Hp, kind, d, bw)
-    rank = int(torch.linalg.matrix_rank(Kss))
+    rank = max(int(torch.linalg.matrix_rank(Kss)), 1)
     if beta <= 0:
         return Kts @ torch.linalg.pinv(Kss), rank
     eye = torch.eye(n_p, dtype=Kss.dtype, device=Kss.device)
-    return Kts @ torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye), rank
+    return Kts @ torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / rank) * eye), rank
 
 
 def _ainv(ctx, B):
@@ -285,13 +285,30 @@ def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
     return p - p.mean(1, keepdim=True)
 
 
-def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear'):
+def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear',
+                          target_maxp=0.0, iters=12):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
     M, rank = _design(H_L, Hp, beta, n_p, kind)
-    g = gamma * (M * M).sum() / (m * n_p)
-    Y, loss, gnorm = _fit_logistic(M, Y_L, g, n_p, c, steps, prior)
-    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': g.item()}
+    ref = (M * M).sum() / (m * n_p)
+
+    def fit(gm, st):
+        return _fit_logistic(M, Y_L, gm * ref, n_p, c, st, prior)
+
+    if target_maxp > 0:
+        lo, hi = 1e-8, 1e4
+        for _ in range(iters):
+            mid = (lo * hi) ** 0.5
+            Yt = fit(mid, max(steps // 4, 30))[0]
+            if F.softmax(Yt, 1).max(1)[0].mean() > target_maxp:
+                lo = mid
+            else:
+                hi = mid
+        gamma = (lo * hi) ** 0.5
+
+    Y, loss, gnorm = fit(gamma, steps)
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': float(gamma * ref),
+           'gamma_rel': float(gamma)}
     return F.softmax(Y, dim=1), ctx
 
 

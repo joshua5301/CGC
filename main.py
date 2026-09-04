@@ -59,12 +59,14 @@ else:
                                   torch.float64, hl.device)
         if args.label_mode == 'logistic':
             Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
-                                           args.ce_steps, prior, args.label_kernel)
+                                           args.ce_steps, prior, args.label_kernel,
+                                           args.target_maxp)
         else:
             Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
-              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}')
+              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}'
+              + (f'  gamma*: {ctx["gamma_rel"]:.3g}' if 'gamma_rel' in ctx else ''))
     else:
         label_cond = onehot_labels(args, hl, H_L, y_L, assign, y_pool, tr_pool)
     n_pool = len(H_pool)

@@ -35,6 +35,8 @@ def para():
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='last, mean, concat')
+    parser.add_argument('--target_maxp', type=float, default=0.0,
+                        help='>0 auto-selects gamma by bisection to hit this target sharpness')
     parser.add_argument('--teacher', type=str, default='none', help='none, probe')
     parser.add_argument('--teacher_temp', type=float, default=1.0)
     parser.add_argument('--teacher_gamma', type=float, default=1e-2)
