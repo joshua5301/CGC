@@ -45,8 +45,12 @@ else:
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
     elif args.label_mode in ('logistic', 'probe'):
+        prior = None
+        if args.label_prior == 'cluster':
+            prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
+                                  torch.float64, hl.device)
         if args.label_mode == 'logistic':
-            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps)
+            Y, ctx = solve_labels_logistic(H_L, hl, Y_L, args.beta, args.gamma, args.ce_steps, prior)
         else:
             Y, ctx = solve_labels_probe(H_L, hl, Y_L, args.gamma, args.ce_steps)
         label_cond = Y.float()

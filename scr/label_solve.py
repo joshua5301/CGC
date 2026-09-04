@@ -3,6 +3,13 @@ import torch
 import torch.nn.functional as F
 
 
+def _design(H_L, Hp, beta, eye, n_p):
+    if beta <= 0:
+        return H_L @ torch.linalg.pinv(Hp)
+    Kss = Hp @ Hp.T
+    return (H_L @ Hp.T) @ torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye)
+
+
 def _ainv(ctx, B):
     return torch.linalg.solve(ctx['A'], B)
 
@@ -20,9 +27,7 @@ def solve_labels(H_L, Hp, Y_L, beta, gamma):
     n_p = Hp.shape[0]
     eye = torch.eye(n_p, dtype=Hp.dtype, device=Hp.device)
 
-    Kss = Hp @ Hp.T
-    R = torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye)
-    M = (H_L @ Hp.T) @ R
+    M = _design(H_L, Hp, beta, eye, n_p)
 
     MtM = M.T @ M
     g = gamma * MtM.diagonal().sum() / n_p
@@ -133,33 +138,47 @@ def onehot_labels(args, Hp, H_L, y_L, assign, y_pool, tr):
     return torch.where(empty, fallback, votes.argmax(1)).long()
 
 
-def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200):
-    H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
-    m, n_p = H_L.shape[0], Hp.shape[0]
-    eye = torch.eye(n_p, dtype=Hp.dtype, device=Hp.device)
-
-    Kss = Hp @ Hp.T
-    R = torch.linalg.inv(Kss + beta * (Kss.diagonal().sum() / n_p) * eye)
-    M = (H_L @ Hp.T) @ R
-    g = gamma * (M * M).sum() / (m * n_p)
-    y = Y_L.argmax(1)
-
-    Y = torch.zeros(n_p, Y_L.shape[1], dtype=Hp.dtype, device=Hp.device, requires_grad=True)
+def _fit_logistic(M, y, g, n_p, c, steps, prior=None):
+    ref = 0.0 if prior is None else prior
+    Y = (torch.zeros(n_p, c, dtype=M.dtype, device=M.device) if prior is None
+         else prior.clone()).requires_grad_(True)
     opt = torch.optim.LBFGS([Y], max_iter=steps, history_size=20, tolerance_grad=1e-10,
                             tolerance_change=1e-14, line_search_fn='strong_wolfe')
 
     def closure():
         opt.zero_grad()
-        loss = F.cross_entropy(M @ Y, y) + 0.5 * g * (Y ** 2).sum()
+        loss = F.cross_entropy(M @ Y, y) + 0.5 * g * ((Y - ref) ** 2).sum()
         loss.backward()
         return loss
 
     opt.step(closure)
     with torch.enable_grad():
         loss = closure()
-    ctx = {'loss': loss.item(), 'gnorm': Y.grad.norm().item(),
-           'rank': int(torch.linalg.matrix_rank(Hp)), 'gamma': g.item()}
-    return F.softmax(Y.detach(), dim=1), ctx
+    return Y.detach(), loss.item(), Y.grad.norm().item()
+
+
+def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
+    cnt = torch.zeros(n_p, c, dtype=dtype, device=device)
+    if assign is not None:
+        a = assign.to(device)[tr]
+        cnt.index_put_((a, y_pool[tr].to(device)),
+                       torch.ones(int(tr.sum()), dtype=dtype, device=device), accumulate=True)
+    glob = F.one_hot(y_pool[tr], c).to(dtype).mean(0).to(device)
+    tot = cnt.sum(1, keepdim=True)
+    p = torch.where(tot > 0, cnt / tot.clamp(min=1.0), glob.expand(n_p, c))
+    p = ((p + eps) / (1 + c * eps)).log()
+    return p - p.mean(1, keepdim=True)
+
+
+def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None):
+    H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
+    m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
+    M = _design(H_L, Hp, beta, torch.eye(n_p, dtype=Hp.dtype, device=Hp.device), n_p)
+    g = gamma * (M * M).sum() / (m * n_p)
+    Y, loss, gnorm = _fit_logistic(M, Y_L.argmax(1), g, n_p, c, steps, prior)
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(torch.linalg.matrix_rank(Hp)),
+           'gamma': g.item()}
+    return F.softmax(Y, dim=1), ctx
 
 
 def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200):
