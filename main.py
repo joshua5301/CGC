@@ -58,6 +58,16 @@ else:
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
+    elif args.label_mode == 'cs_loss':
+        S = normalize_adj_sparse(data).to(args.device)
+        Y_all = F.one_hot(data.y, args.num_class).to(hl.dtype)
+        Y, ctx = solve_labels_cs_loss(H_all, hl, Y_all, data.train_mask, S, args.beta,
+                                      args.gamma, args.cs_folds, args.cs_a1, args.cs_a2,
+                                      args.cs_iters, args.cs_scale, args.ce_steps,
+                                      args.seed, args.label_kernel, bool(args.cs_reset))
+        label_cond = Y.float()
+        print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
+              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}')
     elif args.label_mode == 'cs':
         if assign is None:
             raise SystemExit('cs needs a cluster assignment')
@@ -65,11 +75,12 @@ else:
         pm = pool_mask(args, data, len(data.y), args.device)
         Y, ctx = solve_labels_cs(H_all, H_L, Y_L, args.gamma, S, data.train_mask,
                                  pm, assign, len(hl), args.cs_a1, args.cs_a2,
-                                 args.cs_iters, args.cs_scale, args.ce_steps)
+                                 args.cs_iters, args.cs_scale, args.ce_steps,
+                                 bool(args.cs_reset))
         label_cond = Y.float()
-        acc = (ctx['node_pred'][data.test_mask].argmax(1) == data.y[data.test_mask]
-               ).double().mean() if hasattr(data, 'test_mask') else float('nan')
-        print(f'C&S 노드 예측 test acc: {100*acc:.2f}%')
+        na = lambda msk: (100 * (ctx['node_pred'][msk].argmax(1) == data.y[msk]).double().mean()
+                          ).item() if hasattr(data, 'val_mask') else float('nan')
+        print(f'C&S node-pred  val {na(data.val_mask):.2f}%  test {na(data.test_mask):.2f}%')
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'probe', 'probe_mean', 'ridge', 'ridge_mean',

@@ -346,7 +346,8 @@ def fit_probe_W_ridge(H_L, Y_L, gamma):
     return torch.linalg.solve(A, H_L.T @ Y_L)
 
 
-def correct_and_smooth(Yhat, S, train_mask, Y_L, a1=0.8, a2=0.8, iters=50, scale=1.0):
+def correct_and_smooth(Yhat, S, train_mask, Y_L, a1=0.8, a2=0.8, iters=50, scale=1.0,
+                       reset=True):
     Z = Yhat.to(S.dtype)
     E = torch.zeros_like(Z)
     E[train_mask] = Y_L.to(Z.dtype) - Z[train_mask]
@@ -354,18 +355,81 @@ def correct_and_smooth(Yhat, S, train_mask, Y_L, a1=0.8, a2=0.8, iters=50, scale
     for _ in range(iters):
         E = (1 - a1) * E0 + a1 * torch.spmm(S, E)
     Z = Z + scale * E
-    Z[train_mask] = Y_L.to(Z.dtype)
+    if reset:
+        Z[train_mask] = Y_L.to(Z.dtype)
     Z0 = Z.clone()
     for _ in range(iters):
         Z = (1 - a2) * Z0 + a2 * torch.spmm(S, Z)
     return Z
 
 
+def _cs_diff(P, S, inj, Yfull, a1, a2, iters, scale, reset=True):
+    m = inj.unsqueeze(1).to(P.dtype)
+    E0 = m * (Yfull - P)
+    E = E0
+    for _ in range(iters):
+        E = (1 - a1) * E0 + a1 * torch.sparse.mm(S, E)
+    Z = P + scale * E
+    if reset:
+        Z = torch.where(inj.unsqueeze(1), Yfull, Z)
+    Z0 = Z
+    for _ in range(iters):
+        Z = (1 - a2) * Z0 + a2 * torch.sparse.mm(S, Z)
+    return Z
+
+
+def solve_labels_cs_loss(H_all, Hp, Y_all, train_mask, S, beta, gamma, folds=2,
+                         a1=0.8, a2=0.8, iters=20, scale=1.0, steps=100, seed=0,
+                         kind='linear', reset=True):
+    """min_Y'  sum_f CE( CS_{train}(softmax(M_all Y'))[f], Y[f] ) + (g/2)||Y'||^2"""
+    H_all, Hp, Y_all = H_all.float(), Hp.float(), Y_all.float()
+    n, n_p, c = H_all.shape[0], Hp.shape[0], Y_all.shape[1]
+    M, rank = _design(H_all, Hp, beta, n_p, kind)
+    M = M.float()
+    g = gamma * (M * M).sum() / (n * n_p)
+
+    idx = train_mask.nonzero().view(-1)
+    perm = idx[torch.randperm(len(idx), generator=torch.Generator().manual_seed(seed))]
+    packs = []
+    for f in perm.chunk(folds):
+        inj = train_mask.clone()
+        inj[f] = False
+        Yf = torch.zeros(n, c, dtype=M.dtype, device=M.device)
+        Yf[inj] = Y_all[inj]
+        packs.append((inj, Yf, f, Y_all[f]))
+
+    Y = torch.zeros(n_p, c, dtype=M.dtype, device=M.device, requires_grad=True)
+    opt = torch.optim.LBFGS([Y], max_iter=steps, history_size=10, tolerance_grad=1e-8,
+                            tolerance_change=1e-12, line_search_fn='strong_wolfe')
+
+    def closure():
+        opt.zero_grad()
+        P = F.softmax(M @ Y, dim=1)
+        loss = 0.0
+        for inj, Yf, f, tgt in packs:
+            Z = _cs_diff(P, S, inj, Yf, a1, a2, iters, scale, reset)
+            Z = Z.clamp(min=1e-9)
+            Z = Z / Z.sum(1, keepdim=True)
+            loss = loss - (tgt * Z[f].log()).sum(1).mean()
+        loss = loss / len(packs) + 0.5 * g * (Y ** 2).sum()
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    with torch.enable_grad():
+        loss = closure()
+    ctx = {'loss': loss.item(), 'gnorm': Y.grad.norm().item(), 'rank': rank,
+           'gamma_rel': float(gamma)}
+    return F.softmax(Y.detach(), dim=1).double(), ctx
+
+
 def solve_labels_cs(H_all, H_L, Y_L, gamma, S, train_mask, pool_mask_, assign, n_p,
-                    a1=0.8, a2=0.8, iters=50, scale=1.0, steps=200):
+                    a1=0.8, a2=0.8, iters=50, scale=1.0, steps=200, reset=True):
+    if reset and bool(train_mask.all()):
+        raise SystemExit('cs: train_mask covers every node (inductive split); the reset step Z[train]=Y_L overwrites the whole base prediction and cs degenerates to plain label propagation. Use --cs_reset 0 or a different --label_mode.')
     W, _, _ = fit_probe_W(H_L, Y_L, gamma, steps)
     Yhat = F.softmax(H_all.double() @ W, dim=1)
-    Z = correct_and_smooth(Yhat, S, train_mask, Y_L, a1, a2, iters, scale).double()
+    Z = correct_and_smooth(Yhat, S, train_mask, Y_L, a1, a2, iters, scale, reset).double()
     Z = Z.clamp(min=0)
     Z = Z / Z.sum(1, keepdim=True).clamp(min=1e-12)
     Y = _cluster_means(Z[pool_mask_], assign, n_p)[0]

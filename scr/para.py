@@ -33,7 +33,7 @@ def para():
 
     parser.add_argument('--landmark', type=str, default='cgc',
                         help='cgc, class_kmeans, kmeans, random, random_split')
-    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe, probe_mean, ridge, ridge_mean, restricted, cs')
+    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe, probe_mean, ridge, ridge_mean, restricted, cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='first (raw X), last, mean, concat')
     parser.add_argument('--target_maxp', type=float, default=0.0,
@@ -42,6 +42,10 @@ def para():
     parser.add_argument('--cs_a1', type=float, default=0.8)
     parser.add_argument('--cs_a2', type=float, default=0.8)
     parser.add_argument('--cs_iters', type=int, default=50)
+    parser.add_argument('--cs_folds', type=int, default=2,
+                        help='cs_loss: train split; C&S injects train-minus-f, loss scored on f')
+    parser.add_argument('--cs_reset', type=int, default=1,
+                        help='0 disables the Z[train]=Y_L reset (needed for inductive splits)')
     parser.add_argument('--cs_scale', type=float, default=1.0)
     parser.add_argument('--teacher', type=str, default='none', help='none, probe, ridge')
     parser.add_argument('--teacher_temp', type=float, default=1.0)
