@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 def para():
     parser = argparse.ArgumentParser()
@@ -45,6 +46,8 @@ def para():
                         help='>1 uses an out-of-fold teacher for train rows')
     parser.add_argument('--distill_pool', type=str, default='train', help='train, all')
     parser.add_argument('--label_prior', type=str, default='none', help='none, cluster')
+    parser.add_argument('--no_hyperpara', type=int, default=0,
+                        help='1 skips the per-dataset hyperpara table entirely')
     parser.add_argument('--preset', type=str, default='', help="'unified' sets the P-based pipeline")
     parser.add_argument('--adj_mode', type=str, default='cosine', help='cosine, coarsen, commute')
     parser.add_argument('--adj_steps', type=int, default=300)
@@ -61,12 +64,23 @@ def para():
     parser.add_argument('--head', type=str, default='mse', help='ce, mse, mse_logit')
 
     args = parser.parse_args()
+    args.explicit = {a.split('=')[0][2:].replace('-', '_') for a in sys.argv[1:] if a.startswith('--')}
     if args.preset == 'unified':
         args.landmark, args.h_pool = 'kmeans', 'all'
         args.generate_adj, args.adj_mode, args.cond_feat = 1, 'commute', 'raw'
         args.label_mode, args.head = 'probe', 'ce'
     return args
 
+
+
+def apply_hyperpara(args):
+    if args.no_hyperpara:
+        return args
+    keep = {k: getattr(args, k) for k in getattr(args, 'explicit', set()) if hasattr(args, k)}
+    args = hyperpara(args) if args.generate_adj == 1 else hyperpara_noadj(args)
+    for k, v in keep.items():
+        setattr(args, k, v)
+    return args
 
 
 def hyperpara(args):

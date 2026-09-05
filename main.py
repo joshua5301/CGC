@@ -16,7 +16,8 @@ datasets = get_dataset(args)
 args, data, data_val, data_test = set_dataset(args, datasets)
 
 ##hyper para
-args = hyperpara(args) if args.generate_adj == 1 else hyperpara_noadj(args)
+args = apply_hyperpara(args)
+print(f'downstream: lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout:g} epoch={args.epoch} hidden={args.n_dim}')
 
 ## cond data
 begin = time.time()
