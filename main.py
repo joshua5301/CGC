@@ -58,7 +58,22 @@ else:
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
-    elif args.label_mode in ('logistic', 'probe', 'probe_mean', 'ridge', 'ridge_mean'):
+    elif args.label_mode == 'cs':
+        if assign is None:
+            raise SystemExit('cs needs a cluster assignment')
+        S = normalize_adj_sparse(data).to(args.device)
+        pm = pool_mask(args, data, len(data.y), args.device)
+        Y, ctx = solve_labels_cs(H_all, H_L, Y_L, args.gamma, S, data.train_mask,
+                                 pm, assign, len(hl), args.cs_a1, args.cs_a2,
+                                 args.cs_iters, args.cs_scale, args.ce_steps)
+        label_cond = Y.float()
+        acc = (ctx['node_pred'][data.test_mask].argmax(1) == data.y[data.test_mask]
+               ).double().mean() if hasattr(data, 'test_mask') else float('nan')
+        print(f'C&S 노드 예측 test acc: {100*acc:.2f}%')
+        print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
+              f'rowsum: {Y.sum(1).mean():.3f}')
+    elif args.label_mode in ('logistic', 'probe', 'probe_mean', 'ridge', 'ridge_mean',
+                             'restricted'):
         prior = None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -73,7 +88,10 @@ else:
                 if assign is None:
                     raise SystemExit('*_mean needs a cluster assignment')
                 pf = label_feats(args.label_feat, pool_d)
-            if args.label_mode.startswith('ridge'):
+            if args.label_mode == 'restricted':
+                Y, ctx = solve_labels_restricted(H_fit, hl, T_fit, args.gamma, args.ce_steps,
+                                                 args.target_maxp, args.maxp_iters, pf, assign)
+            elif args.label_mode.startswith('ridge'):
                 Y, ctx = solve_labels_ridge(H_fit, hl, T_fit, args.gamma, pf, assign)
             else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,

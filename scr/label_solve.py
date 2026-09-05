@@ -235,6 +235,8 @@ def generate_landmarks(args, H_pool, y_pool, extra=()):
 
 
 def label_feats(mode, mats):
+    if mode == 'first':
+        return mats[0]
     if mode == 'last':
         return mats[-1]
     if mode == 'mean':
@@ -342,6 +344,34 @@ def fit_probe_W_ridge(H_L, Y_L, gamma):
     G = H_L.T @ H_L
     A = G + g * (G.diagonal().sum() / d) * torch.eye(d, dtype=G.dtype, device=G.device)
     return torch.linalg.solve(A, H_L.T @ Y_L)
+
+
+def correct_and_smooth(Yhat, S, train_mask, Y_L, a1=0.8, a2=0.8, iters=50, scale=1.0):
+    Z = Yhat.to(S.dtype)
+    E = torch.zeros_like(Z)
+    E[train_mask] = Y_L.to(Z.dtype) - Z[train_mask]
+    E0 = E.clone()
+    for _ in range(iters):
+        E = (1 - a1) * E0 + a1 * torch.spmm(S, E)
+    Z = Z + scale * E
+    Z[train_mask] = Y_L.to(Z.dtype)
+    Z0 = Z.clone()
+    for _ in range(iters):
+        Z = (1 - a2) * Z0 + a2 * torch.spmm(S, Z)
+    return Z
+
+
+def solve_labels_cs(H_all, H_L, Y_L, gamma, S, train_mask, pool_mask_, assign, n_p,
+                    a1=0.8, a2=0.8, iters=50, scale=1.0, steps=200):
+    W, _, _ = fit_probe_W(H_L, Y_L, gamma, steps)
+    Yhat = F.softmax(H_all.double() @ W, dim=1)
+    Z = correct_and_smooth(Yhat, S, train_mask, Y_L, a1, a2, iters, scale).double()
+    Z = Z.clamp(min=0)
+    Z = Z / Z.sum(1, keepdim=True).clamp(min=1e-12)
+    Y = _cluster_means(Z[pool_mask_], assign, n_p)[0]
+    ctx = {'loss': float('nan'), 'gnorm': 0.0, 'gamma_rel': float(gamma),
+           'rank': n_p, 'node_pred': Z}
+    return Y, ctx
 
 
 def solve_labels_restricted(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=6,
