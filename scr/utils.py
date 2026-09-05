@@ -362,10 +362,12 @@ def normalize_adj_tensor(adj):
     return mx
 
 
-def soft_loss(log_prob, Y, head):
+def soft_loss(out, Y, head):
+    if head == 'mse_logit':
+        return F.mse_loss(out, Y)
     if head == 'mse':
-        return F.mse_loss(log_prob.exp(), Y)
-    return -(Y * log_prob).sum(1).mean()
+        return F.mse_loss(out.exp(), Y)
+    return -(Y * out).sum(1).mean()
 
 
 def model_training(model, args, data, graph, data_val=None, data_test=None):

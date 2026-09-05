@@ -56,9 +56,9 @@ class SGC(torch.nn.Module):
 class GNN(torch.nn.Module):
     USES_WEIGHT = {'gcn', 'cheby', 'appnp'}
 
-    def __init__(self, kind, nin, nhid, nout, nlayers=2, dropout=0.5, heads=8):
+    def __init__(self, kind, nin, nhid, nout, nlayers=2, dropout=0.5, heads=8, logits=False):
         super().__init__()
-        self.kind, self.dropout = kind, dropout
+        self.kind, self.dropout, self.logits = kind, dropout, logits
         self.layers = torch.nn.ModuleList([])
         self.prop = None
         if kind == 'appnp':
@@ -97,4 +97,4 @@ class GNN(torch.nn.Module):
         x = self._call(self.layers[-1], x, ei, ew)
         if self.prop is not None:
             x = self.prop(x, ei, ew)
-        return F.log_softmax(x, dim=1)
+        return x if self.logits else F.log_softmax(x, dim=1)

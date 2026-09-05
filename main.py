@@ -40,21 +40,24 @@ else:
     hl = label_feats(args.label_feat, h_d)
     Y_L = F.one_hot(y_L, args.num_class).to(hl.dtype)
     H_fit, T_fit = H_L, Y_L
-    if args.teacher == 'probe':
+    if args.teacher in ('probe', 'ridge'):
         fm = data.train_mask if args.distill_pool == 'train' else             torch.ones(len(H_all), dtype=torch.bool, device=H_all.device)
         H_fit = H_all[fm]
-        T_fit = teacher_targets(H_fit, H_L, Y_L, args.teacher_gamma, args.teacher_temp,
-                                200, args.teacher_folds, data.train_mask[fm],
-                                args.seed).to(hl.dtype)
-        print(f'teacher: fit {len(H_fit)} nodes  T={args.teacher_temp}  '
-              f'maxp_teacher {T_fit.max(1)[0].mean():.4f}')
+        T_fit = (teacher_targets_ridge(H_fit, H_L, Y_L, args.teacher_gamma)
+                 if args.teacher == 'ridge' else
+                 teacher_targets(H_fit, H_L, Y_L, args.teacher_gamma, args.teacher_temp,
+                                 200, args.teacher_folds, data.train_mask[fm],
+                                 args.seed)).to(hl.dtype)
+        print(f'teacher[{args.teacher}]: fit {len(H_fit)} nodes  T={args.teacher_temp}  '
+              f'maxp {T_fit.max(1)[0].mean():.4f}  rowsum {T_fit.sum(1).mean():.4f}  '
+              f'min {T_fit.min():.3f}')
 
     if args.label_mode == 'closed':
         Y, ctx = solve_labels(H_fit, hl, T_fit, args.beta, args.gamma, args.label_kernel)
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
-    elif args.label_mode in ('logistic', 'probe', 'probe_mean'):
+    elif args.label_mode in ('logistic', 'probe', 'probe_mean', 'ridge', 'ridge_mean'):
         prior = None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -62,20 +65,24 @@ else:
         if args.label_mode == 'logistic':
             Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
-                                           args.target_maxp)
+                                           args.target_maxp, args.maxp_iters)
         else:
             pf = None
-            if args.label_mode == 'probe_mean':
+            if args.label_mode.endswith('_mean'):
                 if assign is None:
-                    raise SystemExit('probe_mean needs a cluster assignment')
+                    raise SystemExit('*_mean needs a cluster assignment')
                 pf = label_feats(args.label_feat, pool_d)
-            Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
-                                        args.target_maxp, pool=pf, assign=assign)
+            if args.label_mode.startswith('ridge'):
+                Y, ctx = solve_labels_ridge(H_fit, hl, T_fit, args.gamma, pf, assign)
+            else:
+                Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
+                                            args.target_maxp, args.maxp_iters, pf, assign)
         label_cond = Y.float()
         print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
               f'lm={args.landmark} pool={args.h_pool} feat={args.label_feat}')
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
-              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}'
+              f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}  '
+              f'rowsum: {Y.sum(1).mean():.3f}  min: {Y.min():.3f}'
               + (f'  gamma*: {ctx["gamma_rel"]:.3g}' if 'gamma_rel' in ctx else ''))
     else:
         label_cond = onehot_labels(args, hl, H_L, y_L, assign, y_pool, tr_pool)
@@ -122,7 +129,8 @@ ARCHS = ['gcn', 'sage', 'gat', 'cheby', 'appnp'] if args.test_gnn == 'all'     e
 for arch in ARCHS:
     acc = []
     for repeat in range(args.repeat):
-        model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout).to(args.device)
+        model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout,
+                    logits=(args.head == 'mse_logit')).to(args.device)
         acc.append(model_training(model, args, data, graph, data_val, data_test))
     args.test_gnn = arch
     print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
