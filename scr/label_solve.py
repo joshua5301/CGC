@@ -332,30 +332,44 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200):
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
-def teacher_targets(H_fit, H_L, Y_L, gamma, temp, steps=200):
+def teacher_targets(H_fit, H_L, Y_L, gamma, temp, steps=200, folds=0, tr_in_fit=None, seed=0):
+    H_fit, H_L, Y_L = H_fit.double(), H_L.double(), Y_L.double()
+    t = max(temp, 1e-6)
     W, _, _ = fit_probe_W(H_L, Y_L, gamma, steps)
-    return F.softmax(H_fit.double() @ W / max(temp, 1e-6), dim=1)
+    T = F.softmax(H_fit @ W / t, dim=1)
+    if folds and folds > 1 and tr_in_fit is not None:
+        rows = tr_in_fit.nonzero().view(-1).to(T.device)
+        g = torch.Generator().manual_seed(seed)
+        for f in torch.randperm(len(H_L), generator=g).chunk(folds):
+            keep = torch.ones(len(H_L), dtype=torch.bool)
+            keep[f] = False
+            Wf, _, _ = fit_probe_W(H_L[keep], Y_L[keep], gamma, steps)
+            T[rows[f.to(rows.device)]] = F.softmax(H_L[f] @ Wf / t, dim=1)
+    return T
 
 
-def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200):
+def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=12,
+                       pool=None, assign=None):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
-    m, d = H_L.shape
-    g = gamma * (H_L * H_L).sum() / (m * d)
-    y = Y_L.argmax(1)
+    n_p = Hp.shape[0]
 
-    W = torch.zeros(d, Y_L.shape[1], dtype=H_L.dtype, device=H_L.device, requires_grad=True)
-    opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=1e-10,
-                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+    def read(W):
+        if pool is None:
+            return F.softmax(Hp @ W, dim=1)
+        return _cluster_means(F.softmax(pool.double() @ W, dim=1), assign, n_p)[0]
 
-    def closure():
-        opt.zero_grad()
-        loss = F.cross_entropy(H_L @ W, y) + 0.5 * g * (W ** 2).sum()
-        loss.backward()
-        return loss
+    if target_maxp > 0:
+        lo, hi = 1e-8, 1e4
+        for _ in range(iters):
+            mid = (lo * hi) ** 0.5
+            Wt = fit_probe_W(H_L, Y_L, mid, max(steps // 4, 30))[0]
+            if read(Wt).max(1)[0].mean() > target_maxp:
+                lo = mid
+            else:
+                hi = mid
+        gamma = (lo * hi) ** 0.5
 
-    opt.step(closure)
-    with torch.enable_grad():
-        loss = closure()
-    ctx = {'loss': loss.item(), 'gnorm': W.grad.norm().item(),
-           'rank': int(torch.linalg.matrix_rank(Hp)), 'gamma': g.item()}
-    return F.softmax(Hp @ W.detach(), dim=1), ctx
+    W, loss, gnorm = fit_probe_W(H_L, Y_L, gamma, steps)
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(torch.linalg.matrix_rank(Hp)),
+           'gamma_rel': float(gamma)}
+    return read(W), ctx

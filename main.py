@@ -43,7 +43,9 @@ else:
     if args.teacher == 'probe':
         fm = data.train_mask if args.distill_pool == 'train' else             torch.ones(len(H_all), dtype=torch.bool, device=H_all.device)
         H_fit = H_all[fm]
-        T_fit = teacher_targets(H_fit, H_L, Y_L, args.teacher_gamma, args.teacher_temp).to(hl.dtype)
+        T_fit = teacher_targets(H_fit, H_L, Y_L, args.teacher_gamma, args.teacher_temp,
+                                200, args.teacher_folds, data.train_mask[fm],
+                                args.seed).to(hl.dtype)
         print(f'teacher: fit {len(H_fit)} nodes  T={args.teacher_temp}  '
               f'maxp_teacher {T_fit.max(1)[0].mean():.4f}')
 
@@ -52,7 +54,7 @@ else:
         Y, rho = constrain(ctx, Y, Y_L.mean(0), args.constraint)
         label_cond = Y.float()
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  rho: {rho:.4f}')
-    elif args.label_mode in ('logistic', 'probe'):
+    elif args.label_mode in ('logistic', 'probe', 'probe_mean'):
         prior = None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -62,8 +64,16 @@ else:
                                            args.ce_steps, prior, args.label_kernel,
                                            args.target_maxp)
         else:
-            Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps)
+            pf = None
+            if args.label_mode == 'probe_mean':
+                if assign is None:
+                    raise SystemExit('probe_mean needs a cluster assignment')
+                pf = label_feats(args.label_feat, pool_d)
+            Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
+                                        args.target_maxp, pool=pf, assign=assign)
         label_cond = Y.float()
+        print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
+              f'lm={args.landmark} pool={args.h_pool} feat={args.label_feat}')
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
               f'gnorm: {ctx["gnorm"]:.2e}  maxp: {Y.max(1)[0].mean():.4f}'
               + (f'  gamma*: {ctx["gamma_rel"]:.3g}' if 'gamma_rel' in ctx else ''))

@@ -32,7 +32,7 @@ def para():
 
     parser.add_argument('--landmark', type=str, default='cgc',
                         help='cgc, class_kmeans, kmeans, random, random_split')
-    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe')
+    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe, probe_mean')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='last, mean, concat')
     parser.add_argument('--target_maxp', type=float, default=0.0,
@@ -40,6 +40,8 @@ def para():
     parser.add_argument('--teacher', type=str, default='none', help='none, probe')
     parser.add_argument('--teacher_temp', type=float, default=1.0)
     parser.add_argument('--teacher_gamma', type=float, default=1e-2)
+    parser.add_argument('--teacher_folds', type=int, default=0,
+                        help='>1 uses an out-of-fold teacher for train rows')
     parser.add_argument('--distill_pool', type=str, default='train', help='train, all')
     parser.add_argument('--label_prior', type=str, default='none', help='none, cluster')
     parser.add_argument('--preset', type=str, default='', help="'unified' sets the P-based pipeline")
