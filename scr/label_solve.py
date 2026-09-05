@@ -344,6 +344,59 @@ def fit_probe_W_ridge(H_L, Y_L, gamma):
     return torch.linalg.solve(A, H_L.T @ Y_L)
 
 
+def solve_labels_restricted(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=6,
+                            pool=None, assign=None, tol=1e-10):
+    """CE(H_L W, y) + (g/2)||W||^2  s.t.  W in rowspace(H').  No beta."""
+    H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
+    m, d = H_L.shape
+    g = gamma * (H_L * H_L).sum() / (m * d)
+    S, Vh = torch.linalg.svd(Hp, full_matrices=False)[1:]
+    V = Vh[S > tol * S[0]].T
+    HLv, Hpv = H_L @ V, Hp @ V
+    poolv = None if pool is None else pool.double() @ V
+    n_p = Hp.shape[0]
+
+    def read(Z):
+        if poolv is None:
+            return F.softmax(Hpv @ Z, dim=1)
+        return _cluster_means(F.softmax(poolv @ Z, dim=1), assign, n_p)[0]
+
+    def fit(gm, st, init=None):
+        Z = (init.clone() if init is not None else
+             torch.zeros(V.shape[1], Y_L.shape[1], dtype=H_L.dtype,
+                         device=H_L.device)).requires_grad_(True)
+        opt = torch.optim.LBFGS([Z], max_iter=st, history_size=20, tolerance_grad=1e-10,
+                                tolerance_change=1e-14, line_search_fn='strong_wolfe')
+
+        def closure():
+            opt.zero_grad()
+            loss = F.cross_entropy(HLv @ Z, Y_L) + 0.5 * gm * (Z ** 2).sum()
+            loss.backward()
+            return loss
+
+        opt.step(closure)
+        with torch.enable_grad():
+            loss = closure()
+        return Z.detach(), loss.item(), Z.grad.norm().item()
+
+    warm = None
+    if target_maxp > 0:
+        lo, hi = 1e-8, 1e4
+        for _ in range(iters):
+            mid = (lo * hi) ** 0.5
+            warm = fit(mid * (g / max(gamma, 1e-30)), max(steps // 4, 30), warm)[0]
+            if read(warm).max(1)[0].mean() > target_maxp:
+                lo = mid
+            else:
+                hi = mid
+        gamma = (lo * hi) ** 0.5
+        g = gamma * (H_L * H_L).sum() / (m * d)
+
+    Z, loss, gnorm = fit(g, steps, warm)
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': V.shape[1], 'gamma_rel': float(gamma)}
+    return read(Z), ctx
+
+
 def solve_labels_ridge(H_L, Hp, Y_L, gamma, pool=None, assign=None):
     W = fit_probe_W_ridge(H_L, Y_L, gamma)
     n_p = Hp.shape[0]
