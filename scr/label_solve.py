@@ -298,9 +298,10 @@ def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
 
 
 def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear',
-                          target_maxp=0.0, iters=12, pool=None, assign=None):
+                          target_maxp=0.0, iters=12, pool=None, assign=None, n_cl=0):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
+    n_cl = n_cl or n_p
     M, rank = _design(H_L, Hp, beta, n_p, kind)
     ref = (M * M).sum() / (m * n_p)
     Mp = None if pool is None else _design(pool.double(), Hp, beta, n_p, kind)[0]
@@ -308,7 +309,7 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
     def read(Y):
         if Mp is None:
             return F.softmax(Y, dim=1)
-        return _cluster_means(F.softmax(Mp @ Y, dim=1), assign, n_p)[0]
+        return _cluster_means(F.softmax(Mp @ Y, dim=1), assign, n_cl)[0]
 
     def fit(gm, st, init=None):
         return _fit_logistic(M, Y_L, gm * ref, n_p, c, st, prior, init)

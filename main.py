@@ -116,9 +116,19 @@ else:
             h, h_d = wm[0], wm[1:]
             hl, ctx['W'] = label_feats(args.label_feat, h_d), W0
         elif args.label_mode.startswith('logistic'):
-            Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
+            basis, n_cl = hl, 0
+            if args.expert_basis > 0:
+                if pf is None:
+                    raise SystemExit('--expert_basis needs --label_mode logistic_mean')
+                gz = torch.Generator(); gz.manual_seed(args.seed)
+                sel = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
+                basis, n_cl = pf[sel.to(pf.device)], len(hl)
+                print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
+            Y, ctx = solve_labels_logistic(H_fit, basis, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
-                                           args.target_maxp, args.maxp_iters, pf, assign)
+                                           args.target_maxp, args.maxp_iters, pf, assign,
+                                           n_cl)
+            ctx['basis'] = basis
         else:
             if args.label_mode == 'restricted':
                 Y, ctx = solve_labels_restricted(H_fit, hl, T_fit, args.gamma, args.ce_steps,
@@ -131,7 +141,7 @@ else:
         label_cond = Y.float()
         if 'W' in ctx or 'dual' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx
-                    else dual_logits(H_all, hl, ctx['dual'])).argmax(1)
+                    else dual_logits(H_all, ctx.get('basis', hl), ctx['dual'])).argmax(1)
             ea = lambda msk: (100 * (pred[msk] == data.y[msk]).double().mean()).item()
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
