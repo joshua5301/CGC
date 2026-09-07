@@ -108,6 +108,12 @@ else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
                                             args.target_maxp, args.maxp_iters, pf, assign)
         label_cond = Y.float()
+        if 'W' in ctx:
+            pred = (H_all.double() @ ctx['W']).argmax(1)
+            ea = lambda msk: (100 * (pred[msk] == data.y[msk]).double().mean()).item()
+            print(f'expert: train {ea(data.train_mask):.2f}%  '
+                  + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
+                  + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
         print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
               f'lm={args.landmark} pool={args.h_pool} feat={args.label_feat}')
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '

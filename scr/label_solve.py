@@ -487,7 +487,8 @@ def solve_labels_restricted(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, ite
         g = gamma * (H_L * H_L).sum() / (m * d)
 
     Z, loss, gnorm = fit(g, steps, warm)
-    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': V.shape[1], 'gamma_rel': float(gamma)}
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': V.shape[1], 'gamma_rel': float(gamma),
+           'W': V @ Z}
     return read(Z), ctx
 
 
@@ -497,7 +498,7 @@ def solve_labels_ridge(H_L, Hp, Y_L, gamma, pool=None, assign=None):
     Y = (Hp.double() @ W if pool is None
          else _cluster_means(pool.double() @ W, assign, n_p)[0])
     ctx = {'loss': float('nan'), 'gnorm': 0.0, 'gamma_rel': float(gamma),
-           'rank': int(torch.linalg.matrix_rank(Hp))}
+           'rank': int(torch.linalg.matrix_rank(Hp)), 'W': W}
     return Y, ctx
 
 
@@ -545,5 +546,5 @@ def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=12
 
     W, loss, gnorm = fit_probe_W(H_L, Y_L, gamma, steps, warm)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(torch.linalg.matrix_rank(Hp)),
-           'gamma_rel': float(gamma)}
+           'gamma_rel': float(gamma), 'W': W}
     return read(W), ctx
