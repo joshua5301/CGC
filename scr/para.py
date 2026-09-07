@@ -41,6 +41,8 @@ def para():
     parser.add_argument('--w_lr', type=float, default=0.05, help='weighted: Adam lr')
     parser.add_argument('--w_mu', type=float, default=0.0,
                         help='weighted: trust-region pull toward uniform weights')
+    parser.add_argument('--w_target', type=str, default='both',
+                        help='weighted: optimise both, feat only, or label only')
     parser.add_argument('--w_batch', type=int, default=20000,
                         help='weighted: labelled nodes per step (0 = all)')
     parser.add_argument('--label_feat', type=str, default='last', help='first (raw X), last, mean, concat')

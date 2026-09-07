@@ -112,7 +112,7 @@ else:
             Y, ctx, wm = solve_labels_weighted(
                 H_fit, T_fit, pf, P, assign, len(hl), args.beta, args.label_kernel,
                 args.w_steps, args.w_lr, args.w_mu, args.w_batch, args.seed,
-                [H_pool] + list(pool_d))
+                [H_pool] + list(pool_d), args.w_target)
             h, h_d = wm[0], wm[1:]
             hl, ctx['W'] = label_feats(args.label_feat, h_d), W0
         elif args.label_mode.startswith('logistic'):

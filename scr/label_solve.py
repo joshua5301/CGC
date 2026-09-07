@@ -346,16 +346,21 @@ def _wmean(pi, X, assign, n_p):
 
 
 def solve_labels_weighted(H_L, Y_L, pf, P, assign, n_p, beta, kind, steps, lr, mu,
-                          batch, seed, extra=()):
+                          batch, seed, extra=(), target='both'):
     H_L, Y_L, pf, P = H_L.double(), Y_L.double(), pf.double(), P.double()
     assign = assign.to(pf.device)
     u = torch.zeros(len(pf), dtype=pf.dtype, device=pf.device, requires_grad=True)
     opt = torch.optim.Adam([u], lr=lr)
     g = torch.Generator(); g.manual_seed(seed)
 
+    def split(v):
+        pi = _cluster_softmax(v, assign, n_p)
+        pu = _cluster_softmax(torch.zeros_like(v), assign, n_p)
+        return (pu if target == 'label' else pi), (pu if target == 'feat' else pi)
+
     def forward(idx):
-        pi = _cluster_softmax(u, assign, n_p)
-        Xp, Yp = _wmean(pi, pf, assign, n_p), _wmean(pi, P, assign, n_p)
+        px, py = split(u)
+        Xp, Yp = _wmean(px, pf, assign, n_p), _wmean(py, P, assign, n_p)
         M, rank = _design(H_L[idx], Xp, beta, n_p, kind)
         return (F.cross_entropy(M @ Yp, Y_L[idx]) + 0.5 * mu * (u ** 2).mean(), Yp, rank)
 
@@ -373,10 +378,10 @@ def solve_labels_weighted(H_L, Y_L, pf, P, assign, n_p, beta, kind, steps, lr, m
                   f'pi_max {_cluster_softmax(u.detach(), assign, n_p).max().item():.2e}')
 
     with torch.no_grad():
-        pi = _cluster_softmax(u, assign, n_p)
+        px, _ = split(u)
         loss, Yp, rank = forward(slice(None))
     ctx = {'loss': loss.item(), 'gnorm': 0.0, 'rank': rank}
-    return Yp, ctx, [_wmean(pi, E.double(), assign, n_p).to(E.dtype) for E in extra]
+    return Yp, ctx, [_wmean(px, E.double(), assign, n_p).to(E.dtype) for E in extra]
 
 
 def dual_logits(H, Hp, dual):
