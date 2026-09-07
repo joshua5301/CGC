@@ -379,9 +379,20 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
             optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=args.weight_decay)
 
         model.train()
-        output = model(graph)
-        out, y = output[graph.train_mask], graph.y[graph.train_mask]
-        loss = F.nll_loss(out, y) if y.dim() == 1 else soft_loss(out, y, args.head)
+        mix = getattr(args, 'mixup', 0.0)
+        if mix > 0:
+            Y = graph.y if graph.y.dim() > 1 else F.one_hot(graph.y, args.num_class).float()
+            lam = torch.distributions.Beta(mix, mix).sample().item()
+            perm = torch.randperm(len(Y), device=Y.device)
+            g2 = Data(x=lam * graph.x + (1 - lam) * graph.x[perm],
+                      edge_index=graph.edge_index, edge_attr=graph.edge_attr)
+            out = model(g2)[graph.train_mask]
+            y = (lam * Y + (1 - lam) * Y[perm])[graph.train_mask]
+            loss = soft_loss(out, y, args.head)
+        else:
+            output = model(graph)
+            out, y = output[graph.train_mask], graph.y[graph.train_mask]
+            loss = F.nll_loss(out, y) if y.dim() == 1 else soft_loss(out, y, args.head)
 
         optimizer.zero_grad()
         loss.backward()
