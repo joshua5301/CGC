@@ -128,8 +128,8 @@ else:
                 if pf is None:
                     raise SystemExit('--expert_basis needs --label_mode logistic_mean')
                 gz = torch.Generator(); gz.manual_seed(args.seed)
-                sel = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
-                basis, n_cl = pf[sel.to(pf.device)], len(hl)
+                pick = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
+                basis, n_cl = pf[pick.to(pf.device)], len(hl)
                 print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
             Y, ctx = solve_labels_logistic(H_fit, basis, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
