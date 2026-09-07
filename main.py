@@ -96,17 +96,26 @@ else:
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
-                             'ridge', 'ridge_mean', 'restricted'):
+                             'ridge', 'ridge_mean', 'restricted', 'weighted'):
         prior = None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
                                   torch.float64, hl.device)
         pf = None
-        if args.label_mode.endswith('_mean'):
+        if args.label_mode.endswith('_mean') or args.label_mode == 'weighted':
             if assign is None:
                 raise SystemExit('*_mean needs a cluster assignment')
             pf = label_feats(args.label_feat, pool_d)
-        if args.label_mode.startswith('logistic'):
+        if args.label_mode == 'weighted':
+            W0 = fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
+            P = F.softmax(pf.double() @ W0, dim=1)
+            Y, ctx, wm = solve_labels_weighted(
+                H_fit, T_fit, pf, P, assign, len(hl), args.beta, args.label_kernel,
+                args.w_steps, args.w_lr, args.w_mu, args.w_batch, args.seed,
+                [H_pool] + list(pool_d))
+            h, h_d = wm[0], wm[1:]
+            hl, ctx['W'] = label_feats(args.label_feat, h_d), W0
+        elif args.label_mode.startswith('logistic'):
             Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
                                            args.target_maxp, args.maxp_iters, pf, assign)
@@ -120,8 +129,9 @@ else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
                                             args.target_maxp, args.maxp_iters, pf, assign)
         label_cond = Y.float()
-        if 'W' in ctx:
-            pred = (H_all.double() @ ctx['W']).argmax(1)
+        if 'W' in ctx or 'dual' in ctx:
+            pred = ((H_all.double() @ ctx['W']) if 'W' in ctx
+                    else dual_logits(H_all, hl, ctx['dual'])).argmax(1)
             ea = lambda msk: (100 * (pred[msk] == data.y[msk]).double().mean()).item()
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')

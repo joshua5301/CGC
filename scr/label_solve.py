@@ -327,8 +327,61 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
 
     Y, loss, gnorm = fit(gamma, steps, warm)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': float(gamma * ref),
-           'gamma_rel': float(gamma)}
+           'gamma_rel': float(gamma), 'dual': (Y, beta, kind)}
     return read(Y), ctx
+
+
+def _cluster_softmax(u, assign, n_p):
+    mx = torch.full((n_p,), float('-inf'), dtype=u.dtype, device=u.device)
+    mx = mx.scatter_reduce(0, assign, u, 'amax', include_self=False)
+    mx = torch.where(mx.isinf(), torch.zeros_like(mx), mx)
+    e = (u - mx[assign]).exp()
+    s = torch.zeros(n_p, dtype=u.dtype, device=u.device).index_add_(0, assign, e)
+    return e / s[assign].clamp_min(1e-30)
+
+
+def _wmean(pi, X, assign, n_p):
+    return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
+        0, assign, pi.unsqueeze(1) * X)
+
+
+def solve_labels_weighted(H_L, Y_L, pf, P, assign, n_p, beta, kind, steps, lr, mu,
+                          batch, seed, extra=()):
+    H_L, Y_L, pf, P = H_L.double(), Y_L.double(), pf.double(), P.double()
+    assign = assign.to(pf.device)
+    u = torch.zeros(len(pf), dtype=pf.dtype, device=pf.device, requires_grad=True)
+    opt = torch.optim.Adam([u], lr=lr)
+    g = torch.Generator(); g.manual_seed(seed)
+
+    def forward(idx):
+        pi = _cluster_softmax(u, assign, n_p)
+        Xp, Yp = _wmean(pi, pf, assign, n_p), _wmean(pi, P, assign, n_p)
+        M, rank = _design(H_L[idx], Xp, beta, n_p, kind)
+        return (F.cross_entropy(M @ Yp, Y_L[idx]) + 0.5 * mu * (u ** 2).mean(), Yp, rank)
+
+    every = max(steps // 6, 1)
+    for t in range(steps):
+        idx = (torch.randperm(len(H_L), generator=g)[:batch].to(H_L.device)
+               if 0 < batch < len(H_L) else slice(None))
+        opt.zero_grad()
+        loss, Yp, _ = forward(idx)
+        loss.backward()
+        opt.step()
+        if t % every == 0 or t == steps - 1:
+            print(f'  [w] step {t:4d}  loss {loss.item():.4f}  '
+                  f'maxp {Yp.max(1)[0].mean().item():.4f}  '
+                  f'pi_max {_cluster_softmax(u.detach(), assign, n_p).max().item():.2e}')
+
+    with torch.no_grad():
+        pi = _cluster_softmax(u, assign, n_p)
+        loss, Yp, rank = forward(slice(None))
+    ctx = {'loss': loss.item(), 'gnorm': 0.0, 'rank': rank}
+    return Yp, ctx, [_wmean(pi, E.double(), assign, n_p).to(E.dtype) for E in extra]
+
+
+def dual_logits(H, Hp, dual):
+    Y, beta, kind = dual
+    return _design(H.double(), Hp.double(), beta, Hp.shape[0], kind)[0] @ Y
 
 
 def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
