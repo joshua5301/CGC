@@ -379,8 +379,14 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
             optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=args.weight_decay)
 
         model.train()
-        mix = getattr(args, 'mixup', 0.0)
-        if mix > 0:
+        mix, tan = getattr(args, 'mixup', 0.0), getattr(args, 'tangent', 0.0)
+        if tan > 0 and hasattr(graph, 'u'):
+            t = torch.randn(len(graph.x), 1, device=graph.x.device) * graph.sig.unsqueeze(1) * tan
+            g2 = Data(x=graph.x + t * graph.u, edge_index=graph.edge_index, edge_attr=graph.edge_attr)
+            y = (graph.y + t * graph.g).clamp_min(0)
+            y = (y / y.sum(1, keepdim=True).clamp_min(1e-12))[graph.train_mask]
+            loss = soft_loss(model(g2)[graph.train_mask], y, args.head)
+        elif mix > 0:
             Y = graph.y if graph.y.dim() > 1 else F.one_hot(graph.y, args.num_class).float()
             lam = torch.distributions.Beta(mix, mix).sample().item()
             perm = torch.randperm(len(Y), device=Y.device)

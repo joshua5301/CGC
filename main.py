@@ -24,6 +24,7 @@ begin = time.time()
 args, label_cond = generate_labels_syn(args, data)
 H = conv_graph_multi(args, data)
 
+tan = None
 if args.landmark == 'cgc':
     model = linear_model(args, H, data, data_test)
     H_aug, y_aug, conf = data_assessment(args, data, model, H)
@@ -164,6 +165,13 @@ else:
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
+        tan = None
+        if args.tangent > 0 and pf is not None and assign is not None:
+            Pp = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
+                           else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1)
+            tan = tangent_stats(H_pool, Pp, assign, len(hl))
+            print(f'tangent: sigma mean {tan[2].mean():.4f}  |g| mean {tan[1].norm(dim=1).mean():.4f}  '
+                  f'bytes/node {h.shape[1] + Y.shape[1]} -> {2 * h.shape[1] + Y.shape[1] + 1}')
         print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
               f'lm={args.landmark} pool={args.h_pool} feat={args.label_feat}')
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '
@@ -200,6 +208,8 @@ if args.generate_adj == 1:
     graph = Data(x=x, y=label_cond, edge_index=a.nonzero().t(), edge_attr=a[a.nonzero()[:,0], a.nonzero()[:,1]], train_mask=torch.ones(len(x), dtype=torch.bool))
 else:
     graph = Data(x=h, y=label_cond, edge_index=torch.eye(len(h)).nonzero().t(), edge_attr=torch.ones(len(h)), train_mask=torch.ones(len(h), dtype=torch.bool))
+    if tan is not None:
+        graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
 
 args.cond_time = time.time()-begin
 print('Condensation time:',  f'{args.cond_time:.3f}', 's')

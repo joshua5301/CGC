@@ -37,6 +37,9 @@ def para():
                         help='candidate over-generation factor for --landmark easy/hard')
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, probe, probe_mean, ridge, ridge_mean, restricted, weighted, cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
+    parser.add_argument('--tangent', type=float, default=0.0,
+                        help='first-order condensation: downstream perturbs each node along its '
+                             'cell principal axis by N(0,(tangent*sigma)^2); 0 = off')
     parser.add_argument('--mixup', type=float, default=0.0,
                         help='downstream mixup Beta(a,a) on the condensed set; 0 = off')
     parser.add_argument('--lam_p', type=float, default=0.0,
