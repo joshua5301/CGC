@@ -212,15 +212,20 @@ def _assign(H, k, method):
     return torch.from_numpy(np.ascontiguousarray(labels)).long()
 
 
-def generate_landmarks(args, H_pool, y_pool, extra=()):
+def posterior_feats(H, P, lam):
+    r = lambda A: A / A.norm(dim=1).mean().clamp_min(1e-12)
+    return torch.cat([r(H), lam * r(P.to(H.dtype))], dim=1)
+
+
+def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None):
     n_p = int(args.budget)
     if args.landmark == 'random':
         idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
-        Hw = _whiten(H_pool, getattr(args, 'whiten', 0.0))
+        Hw = _whiten(H_pool if Hc is None else Hc, getattr(args, 'whiten', 0.0))
         assign = torch.cdist(Hw, Hw[idx]).argmin(1)
         assign[idx] = torch.arange(len(idx), device=assign.device)
         return H_pool[idx], assign, [E[idx] for E in extra]
-    Hw = _whiten(H_pool, getattr(args, 'whiten', 0.0))
+    Hw = _whiten(H_pool if Hc is None else Hc, getattr(args, 'whiten', 0.0))
     if args.landmark == 'class_kmeans':
         assign, k = torch.zeros(len(H_pool), dtype=torch.long), 0
         for cls in range(args.num_class):

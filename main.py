@@ -36,7 +36,17 @@ else:
     n_keep = int(args.budget)
     if args.landmark in ('easy', 'hard'):
         args.budget = min(int(n_keep * args.cand_mult), len(H_pool))
-    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
+    Hc = None
+    if args.lam_p > 0:
+        pf0 = label_feats(args.label_feat, pool_d)
+        HL0 = label_feats(args.label_feat, depths)[data.train_mask]
+        YL0 = F.one_hot(data.y[data.train_mask], args.num_class).to(pf0.dtype)
+        W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps)[0]
+        P0 = F.softmax(pf0.double() @ W0c, dim=1)
+        Hc = posterior_feats(pf0, P0, args.lam_p)
+        print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
+              f'(lam={args.lam_p:g})')
+    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc)
     n_cand, args.budget = len(h), n_keep
 
     y_L = data.y[data.train_mask]
