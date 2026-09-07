@@ -298,7 +298,8 @@ def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
 
 
 def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear',
-                          target_maxp=0.0, iters=12, pool=None, assign=None, n_cl=0):
+                          target_maxp=0.0, iters=12, pool=None, assign=None, n_cl=0,
+                          sel=None):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
     n_cl = n_cl or n_p
@@ -309,7 +310,7 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
     def read(Y):
         if Mp is None:
             return F.softmax(Y, dim=1)
-        return _cluster_means(F.softmax(Mp @ Y, dim=1), assign, n_cl)[0]
+        return _pool_means(F.softmax(Mp @ Y, dim=1), assign, n_cl, sel)
 
     def fit(gm, st, init=None):
         return _fit_logistic(M, Y_L, gm * ref, n_p, c, st, prior, init)
@@ -339,6 +340,21 @@ def _cluster_softmax(u, assign, n_p):
     e = (u - mx[assign]).exp()
     s = torch.zeros(n_p, dtype=u.dtype, device=u.device).index_add_(0, assign, e)
     return e / s[assign].clamp_min(1e-30)
+
+
+def _pool_means(P, assign, n_p, sel=None):
+    z = lambda k: torch.zeros(k, dtype=P.dtype, device=P.device)
+    one = torch.ones(len(P), dtype=P.dtype, device=P.device)
+    if sel is None:
+        return (z(n_p * P.shape[1]).view(n_p, -1).index_add_(0, assign, P)
+                / z(n_p).index_add_(0, assign, one).clamp_min(1e-30).unsqueeze(1))
+    w = sel.to(P.dtype).to(P.device)
+    acc = z(n_p * P.shape[1]).view(n_p, -1).index_add_(0, assign, w.unsqueeze(1) * P)
+    cnt = z(n_p).index_add_(0, assign, w)
+    aa = z(n_p * P.shape[1]).view(n_p, -1).index_add_(0, assign, P)
+    cc = z(n_p).index_add_(0, assign, one)
+    e = (cnt == 0).unsqueeze(1)
+    return torch.where(e, aa, acc) / torch.where(e, cc.unsqueeze(1), cnt.unsqueeze(1))
 
 
 def _wmean(pi, X, assign, n_p):
@@ -597,14 +613,14 @@ def teacher_targets(H_fit, H_L, Y_L, gamma, temp, steps=200, folds=0, tr_in_fit=
 
 
 def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=12,
-                       pool=None, assign=None):
+                       pool=None, assign=None, sel=None):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     n_p = Hp.shape[0]
 
     def read(W):
         if pool is None:
             return F.softmax(Hp @ W, dim=1)
-        return _cluster_means(F.softmax(pool.double() @ W, dim=1), assign, n_p)[0]
+        return _pool_means(F.softmax(pool.double() @ W, dim=1), assign, n_p, sel)
 
     warm = None
     if target_maxp > 0:

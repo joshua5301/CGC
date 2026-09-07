@@ -97,7 +97,7 @@ else:
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
                              'ridge', 'ridge_mean', 'restricted', 'weighted'):
-        prior = None
+        prior, sel = None, None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
                                   torch.float64, hl.device)
@@ -106,6 +106,13 @@ else:
             if assign is None:
                 raise SystemExit('*_mean needs a cluster assignment')
             pf = label_feats(args.label_feat, pool_d)
+            if args.avg_pool == 'unlabeled':
+                sel = ~tr_pool.to(pf.device)
+                keep = int(sel.sum())
+                print(f'avg pool: {keep}/{len(sel)} unlabeled  '
+                      f'({keep / max(len(hl), 1):.0f} per landmark)')
+                if keep == 0:
+                    raise SystemExit('avg_pool unlabeled: no unlabeled node in the pool')
         if args.label_mode == 'weighted':
             W0 = fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
             P = F.softmax(pf.double() @ W0, dim=1)
@@ -127,7 +134,7 @@ else:
             Y, ctx = solve_labels_logistic(H_fit, basis, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
                                            args.target_maxp, args.maxp_iters, pf, assign,
-                                           n_cl)
+                                           n_cl, sel)
             ctx['basis'] = basis
         else:
             if args.label_mode == 'restricted':
@@ -137,7 +144,8 @@ else:
                 Y, ctx = solve_labels_ridge(H_fit, hl, T_fit, args.gamma, pf, assign)
             else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
-                                            args.target_maxp, args.maxp_iters, pf, assign)
+                                            args.target_maxp, args.maxp_iters, pf, assign,
+                                            sel)
         label_cond = Y.float()
         if 'W' in ctx or 'dual' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx

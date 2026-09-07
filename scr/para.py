@@ -37,6 +37,8 @@ def para():
                         help='candidate over-generation factor for --landmark easy/hard')
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, probe, probe_mean, ridge, ridge_mean, restricted, weighted, cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
+    parser.add_argument('--avg_pool', type=str, default='all',
+                        help='label averaging set: all, or unlabeled (out-of-sample only)')
     parser.add_argument('--expert_basis', type=int, default=0,
                         help='logistic_mean: kernel basis size, 0 = use the landmarks')
     parser.add_argument('--w_steps', type=int, default=300, help='weighted: Adam steps')
