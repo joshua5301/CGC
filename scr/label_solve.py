@@ -234,6 +234,15 @@ def generate_landmarks(args, H_pool, y_pool, extra=()):
     return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
 
 
+def refine_landmarks(h, h_d, H_pool, W, feat_mode, n_p, mode):
+    p = F.softmax(label_feats(feat_mode, h_d).double() @ W, dim=1).clamp_min(1e-12)
+    ent = -(p * p.log()).sum(1)
+    keep = ent.argsort(descending=(mode == 'hard'))[:n_p].sort()[0]
+    h = h[keep]
+    return (h, torch.cdist(H_pool, h).argmin(1), [E[keep] for E in h_d],
+            ent[keep].mean().item(), ent.mean().item())
+
+
 def label_feats(mode, mats):
     if mode == 'first':
         return mats[0]

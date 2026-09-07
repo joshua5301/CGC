@@ -33,7 +33,11 @@ if args.landmark == 'cgc':
 else:
     depths = [H[i] for i in range(args.conv_depth + 1)]
     H_pool, y_pool, tr_pool, pool_d = select_pool(args, data, H[args.conv_depth], depths)
+    n_keep = int(args.budget)
+    if args.landmark in ('easy', 'hard'):
+        args.budget = min(int(n_keep * args.cand_mult), len(H_pool))
     h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
+    n_cand, args.budget = len(h), n_keep
 
     y_L = data.y[data.train_mask]
     H_all = label_feats(args.label_feat, depths)
@@ -52,6 +56,14 @@ else:
         print(f'teacher[{args.teacher}]: fit {len(H_fit)} nodes  T={args.teacher_temp}  '
               f'maxp {T_fit.max(1)[0].mean():.4f}  rowsum {T_fit.sum(1).mean():.4f}  '
               f'min {T_fit.min():.3f}')
+
+    if args.landmark in ('easy', 'hard'):
+        W0 = fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
+        h, assign, h_d, e_sel, e_all = refine_landmarks(
+            h, h_d, H_pool, W0, args.label_feat, n_keep, args.landmark)
+        hl = label_feats(args.label_feat, h_d)
+        print(f'landmark[{args.landmark}]: kept {len(h)}/{n_cand}  '
+              f'entropy sel {e_sel:.4f}  all {e_all:.4f}')
 
     if args.label_mode == 'closed':
         Y, ctx = solve_labels(H_fit, hl, T_fit, args.beta, args.gamma, args.label_kernel)

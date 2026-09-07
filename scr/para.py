@@ -32,7 +32,9 @@ def para():
     parser.add_argument('--aug_ratio', type=float, default=0.55, help='the augmentation ratio')
 
     parser.add_argument('--landmark', type=str, default='cgc',
-                        help='cgc, class_kmeans, kmeans, random, random_split')
+                        help='cgc, class_kmeans, kmeans, random, random_split, easy, hard')
+    parser.add_argument('--cand_mult', type=float, default=4.0,
+                        help='candidate over-generation factor for --landmark easy/hard')
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, probe, probe_mean, ridge, ridge_mean, restricted, cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--label_feat', type=str, default='last', help='first (raw X), last, mean, concat')
