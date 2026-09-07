@@ -95,22 +95,22 @@ else:
         print(f'C&S node-pred  val {na(data.val_mask):.2f}%  test {na(data.test_mask):.2f}%')
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
-    elif args.label_mode in ('logistic', 'probe', 'probe_mean', 'ridge', 'ridge_mean',
-                             'restricted'):
+    elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
+                             'ridge', 'ridge_mean', 'restricted'):
         prior = None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
                                   torch.float64, hl.device)
-        if args.label_mode == 'logistic':
+        pf = None
+        if args.label_mode.endswith('_mean'):
+            if assign is None:
+                raise SystemExit('*_mean needs a cluster assignment')
+            pf = label_feats(args.label_feat, pool_d)
+        if args.label_mode.startswith('logistic'):
             Y, ctx = solve_labels_logistic(H_fit, hl, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,
-                                           args.target_maxp, args.maxp_iters)
+                                           args.target_maxp, args.maxp_iters, pf, assign)
         else:
-            pf = None
-            if args.label_mode.endswith('_mean'):
-                if assign is None:
-                    raise SystemExit('*_mean needs a cluster assignment')
-                pf = label_feats(args.label_feat, pool_d)
             if args.label_mode == 'restricted':
                 Y, ctx = solve_labels_restricted(H_fit, hl, T_fit, args.gamma, args.ce_steps,
                                                  args.target_maxp, args.maxp_iters, pf, assign)

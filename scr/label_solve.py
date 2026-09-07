@@ -298,11 +298,17 @@ def cluster_prior(assign, tr, y_pool, n_p, c, dtype, device, eps=1e-3):
 
 
 def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind='linear',
-                          target_maxp=0.0, iters=12):
+                          target_maxp=0.0, iters=12, pool=None, assign=None):
     H_L, Hp, Y_L = H_L.double(), Hp.double(), Y_L.double()
     m, n_p, c = H_L.shape[0], Hp.shape[0], Y_L.shape[1]
     M, rank = _design(H_L, Hp, beta, n_p, kind)
     ref = (M * M).sum() / (m * n_p)
+    Mp = None if pool is None else _design(pool.double(), Hp, beta, n_p, kind)[0]
+
+    def read(Y):
+        if Mp is None:
+            return F.softmax(Y, dim=1)
+        return _cluster_means(F.softmax(Mp @ Y, dim=1), assign, n_p)[0]
 
     def fit(gm, st, init=None):
         return _fit_logistic(M, Y_L, gm * ref, n_p, c, st, prior, init)
@@ -313,7 +319,7 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
         for _ in range(iters):
             mid = (lo * hi) ** 0.5
             warm = fit(mid, max(steps // 4, 30), warm)[0]
-            if F.softmax(warm, 1).max(1)[0].mean() > target_maxp:
+            if read(warm).max(1)[0].mean() > target_maxp:
                 lo = mid
             else:
                 hi = mid
@@ -322,7 +328,7 @@ def solve_labels_logistic(H_L, Hp, Y_L, beta, gamma, steps=200, prior=None, kind
     Y, loss, gnorm = fit(gamma, steps, warm)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': rank, 'gamma': float(gamma * ref),
            'gamma_rel': float(gamma)}
-    return F.softmax(Y, dim=1), ctx
+    return read(Y), ctx
 
 
 def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
