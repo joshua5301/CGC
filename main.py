@@ -169,9 +169,14 @@ else:
         if args.tangent > 0 and pf is not None and assign is not None:
             Pp = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
                            else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1)
-            tan = tangent_stats(H_pool, Pp, assign, len(hl))
+            *tan, energy = tangent_stats(H_pool, Pp, assign, len(hl), args.tan_rank)
+            d0, c0, r0 = h.shape[1], Y.shape[1], args.tan_rank
+            per = d0 + c0 + (r0 if r0 > 0 else d0) + c0 + 1
+            shared = d0 * r0 if r0 > 0 else 0
             print(f'tangent: sigma mean {tan[2].mean():.4f}  |g| mean {tan[1].norm(dim=1).mean():.4f}  '
-                  f'bytes/node {h.shape[1] + Y.shape[1]} -> {2 * h.shape[1] + Y.shape[1] + 1}')
+                  f'bytes/node {d0 + c0} -> {per} (+{shared} shared)')
+            print('tangent basis energy: ' + '  '.join(
+                f'r={r}:{energy[min(r, len(energy)) - 1]:.3f}' for r in (4, 8, 16, 32, 64)))
         print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
               f'lm={args.landmark} pool={args.h_pool} feat={args.label_feat}')
         print(f'dim: {hl.shape[1]}  rank: {ctx["rank"]}  loss: {ctx["loss"]:.4f}  '

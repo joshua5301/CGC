@@ -362,28 +362,36 @@ def _pool_means(P, assign, n_p, sel=None):
     return torch.where(e, aa, acc) / torch.where(e, cc.unsqueeze(1), cnt.unsqueeze(1))
 
 
-def tangent_stats(H_pool, P, assign, n_p):
+def tangent_stats(H_pool, P, assign, n_p, rank=0):
     H, P = H_pool.double(), P.double()
     assign = assign.to(H.device)
-    U = torch.zeros(n_p, H.shape[1], dtype=H.dtype, device=H.device)
-    G = torch.zeros(n_p, P.shape[1], dtype=H.dtype, device=H.device)
-    S = torch.zeros(n_p, dtype=H.dtype, device=H.device)
     hb, pb = _pool_means(H, assign, n_p), _pool_means(P, assign, n_p)
     order = assign.argsort()
     bounds = torch.searchsorted(assign[order], torch.arange(n_p + 1, device=H.device))
-    for j in range(n_p):
-        idx = order[bounds[j]:bounds[j + 1]]
+    cells = [order[bounds[j]:bounds[j + 1]] for j in range(n_p)]
+
+    U = torch.zeros(n_p, H.shape[1], dtype=H.dtype, device=H.device)
+    for j, idx in enumerate(cells):
+        if len(idx) >= 2:
+            U[j] = torch.linalg.svd(H[idx] - hb[j], full_matrices=False)[2][0]
+    sv = torch.linalg.svdvals(U)
+    energy = (sv ** 2).cumsum(0) / (sv ** 2).sum().clamp_min(1e-30)
+    if rank > 0:
+        B = torch.linalg.svd(U, full_matrices=False)[2][:rank]
+        U = (U @ B.T) @ B
+        U = U / U.norm(dim=1, keepdim=True).clamp_min(1e-12)
+
+    G = torch.zeros(n_p, P.shape[1], dtype=H.dtype, device=H.device)
+    S = torch.zeros(n_p, dtype=H.dtype, device=H.device)
+    for j, idx in enumerate(cells):
         if len(idx) < 2:
             continue
-        Hc = H[idx] - hb[j]
-        u = torch.linalg.svd(Hc, full_matrices=False)[2][0]
-        sc = Hc @ u
+        sc = (H[idx] - hb[j]) @ U[j]
         ss = (sc * sc).sum()
-        if ss <= 0:
-            continue
-        U[j], S[j] = u, sc.std()
-        G[j] = (sc.unsqueeze(1) * (P[idx] - pb[j])).sum(0) / ss
-    return U.float(), G.float(), S.float()
+        if ss > 0:
+            S[j] = sc.std()
+            G[j] = (sc.unsqueeze(1) * (P[idx] - pb[j])).sum(0) / ss
+    return U.float(), G.float(), S.float(), energy
 
 
 def _wmean(pi, X, assign, n_p):

@@ -40,6 +40,8 @@ def para():
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '
                              'cell principal axis by N(0,(tangent*sigma)^2); 0 = off')
+    parser.add_argument('--tan_rank', type=int, default=0,
+                        help='project cell directions onto a shared rank-r basis (0 = full)')
     parser.add_argument('--mixup', type=float, default=0.0,
                         help='downstream mixup Beta(a,a) on the condensed set; 0 = off')
     parser.add_argument('--lam_p', type=float, default=0.0,
