@@ -301,6 +301,20 @@ if args.generate_adj == 1:
 else:
     xs, ys, n0 = h, label_cond.to(h.device), len(h)
     ei = torch.eye(n0).nonzero().t()
+    if args.gen_static > 0:
+        if assign is None or not ('W' in ctx or 'dual' in ctx):
+            raise SystemExit('--gen_static needs a *_mean label mode with an explicit teacher')
+        sd0 = cell_std(H_pool, assign, n0).to(h.device)
+        tch = ((lambda x: x @ ctx['W'].float().to(h.device)) if 'W' in ctx
+               else dual_predictor(ctx.get('basis', hl).to(h.device), ctx['dual']))
+        gs = torch.Generator(device='cpu'); gs.manual_seed(args.seed)
+        eps = torch.randn(args.gen_static, n0, h.shape[1], generator=gs).to(h.device)
+        xs = (h.unsqueeze(0) + sd0.unsqueeze(0) * eps).reshape(-1, h.shape[1])
+        with torch.no_grad():
+            ys = F.softmax(tch(xs), dim=1)
+        ei = torch.eye(len(xs)).nonzero().t()
+        print(f'gen_static: {n0} cells x {args.gen_static} draws = {len(xs)} nodes  '
+              f'maxp {ys.max(1)[0].mean():.4f}')
     if args.tan_static and tan is not None:
         U, G, S = [t.to(h.device) for t in tan]
         dx, dy = S.unsqueeze(1) * U, S.unsqueeze(1) * G
@@ -329,9 +343,7 @@ else:
             Wt = ctx['W'].float().to(h.device)
             graph.teacher = lambda x: x @ Wt
         else:
-            basis = ctx.get('basis', hl).to(h.device)
-            dual = ctx['dual']
-            graph.teacher = lambda x: dual_logits(x, basis, dual).float()
+            graph.teacher = dual_predictor(ctx.get('basis', hl).to(h.device), ctx['dual'])
         print(f'gen: per-cell std mean {graph.sd.mean():.4f}  bytes/node '
               f'{h.shape[1] + label_cond.shape[1]} -> {2 * h.shape[1] + label_cond.shape[1]}')
 

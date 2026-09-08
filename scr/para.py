@@ -46,6 +46,9 @@ def para():
     parser.add_argument('--feat_sub', type=int, default=0,
                         help='1 = project condensed features onto the linear teacher subspace '
                              'span(W) (rank c); stores c coords/node + shared basis')
+    parser.add_argument('--gen_static', type=int, default=0,
+                        help='materialise K teacher-labelled draws x_j + s_j*eps per cell as static '
+                             'nodes (centroids dropped); 0 = off')
     parser.add_argument('--gen', type=float, default=0.0,
                         help='parametric condensation: downstream samples x ~ N(x_j, (gen*s_j)^2) per '
                              'epoch and labels it with the condensed-set teacher; 0 = off')

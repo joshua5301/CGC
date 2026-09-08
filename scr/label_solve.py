@@ -516,6 +516,30 @@ def dual_logits(H, Hp, dual):
     return _design(H.double(), Hp.double(), beta, Hp.shape[0], kind)[0] @ Y
 
 
+def dual_predictor(Hp, dual):
+    Y, beta, kind = dual
+    Hp = Hp.double()
+    n_p, d = Hp.shape
+    bw = None
+    if kind == 'erf':
+        bw = ((Hp * Hp).sum(1).mean() / d).clamp(min=1e-12)
+    if kind == 'rbf':
+        D2 = ((Hp * Hp).sum(1, keepdim=True) + (Hp * Hp).sum(1).unsqueeze(0) - 2 * (Hp @ Hp.T))
+        bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
+    if kind == 'linear' and beta <= 0:
+        RY = torch.linalg.pinv(Hp) @ Y
+    else:
+        Kss = _kernel(Hp, Hp, kind, d, bw)
+        if beta <= 0:
+            RY = torch.linalg.pinv(Kss) @ Y
+        else:
+            rank = max(int(torch.linalg.matrix_rank(Kss)), 1)
+            eye = torch.eye(n_p, dtype=Kss.dtype, device=Kss.device)
+            RY = torch.linalg.solve(Kss + beta * (Kss.diagonal().sum() / rank) * eye, Y)
+    RY = RY.float(); Hpf = Hp.float(); bwf = None if bw is None else float(bw)
+    return lambda x: _kernel(x.float(), Hpf, kind, d, bwf) @ RY
+
+
 def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     H_L, Y_L = H_L.double(), Y_L.double()
     m, d = H_L.shape
