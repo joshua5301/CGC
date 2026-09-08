@@ -366,9 +366,14 @@ for arch in ARCHS:
     for rnd in range(args.self_rounds + 1):
         if rnd > 0:
             dd = data.to(args.device)
-            with torch.no_grad():
-                for m in models: m.eval()
-                Pr = torch.stack([m(dd).exp() for m in models]).mean(0)
+            if args.self_student == 'probe':
+                W_s = fit_probe_W(hl, graph.y.double(), args.gamma, args.ce_steps)[0]
+                with torch.no_grad():
+                    Pr = F.softmax(H_all.double() @ W_s, dim=1).float().to(args.device)
+            else:
+                with torch.no_grad():
+                    for m in models: m.eval()
+                    Pr = torch.stack([m(dd).exp() for m in models]).mean(0)
             yd = dd.y
             ra = lambda msk: (100 * (Pr.argmax(1)[msk] == yd[msk]).double().mean()).item()
             print(f'round {rnd}: teacher = ensemble of {len(models)} students  train {ra(dd.train_mask):.2f}%'
@@ -403,6 +408,8 @@ for arch in ARCHS:
                 graph.y = teacher_mean_labels(Pp_r, assign, len(h), sel).float().to(args.device)
             print(f'round {rnd}: labels maxp {graph.y.max(1)[0].mean():.4f}')
         acc, models = [], []
+        if args.self_student == 'probe' and rnd < args.self_rounds:
+            continue
         for repeat in range(args.repeat):
             model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout,
                         logits=(args.head == 'mse_logit')).to(args.device)

@@ -52,6 +52,9 @@ def para():
     parser.add_argument('--self_ratios', type=str, default='',
                         help='comma list of ratios for rounds 1..R: re-condense at each ratio with the '
                              'previous students as teacher (shrinking schedule); overrides --self_rounds')
+    parser.add_argument('--self_student', type=str, default='gnn',
+                        help="gnn (default) or 'probe': between rounds fit a linear probe on the condensed "
+                             "set instead of training GNNs; GNNs are trained only for the final evaluation")
     parser.add_argument('--self_consistent', type=int, default=0,
                         help='1 = distil the student ensemble into an H-space probe before cell-averaging '
                              '(keeps the teacher a function of what the next student sees)')
