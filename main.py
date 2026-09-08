@@ -358,6 +358,9 @@ args.changed_label = n_pool-data.train_mask.sum().item()
 # model training
 graph=graph.to(args.device)
 ARCHS = ['gcn', 'sage', 'gat', 'cheby', 'appnp'] if args.test_gnn == 'all'     else [k.strip().lower() for k in args.test_gnn.split(',') if k.strip()]
+SELF_RATIOS = [float(r) for r in args.self_ratios.split(',') if r.strip()]
+if SELF_RATIOS:
+    args.self_rounds = len(SELF_RATIOS)
 for arch in ARCHS:
     acc, models = [], []
     for rnd in range(args.self_rounds + 1):
@@ -378,7 +381,26 @@ for arch in ARCHS:
                 if assign is None or graph.num_nodes != len(h):
                     raise SystemExit('self_rounds needs a plain cell-mean condensed set')
                 pmr = pool_mask(args, data, len(data.y), args.device).to(Pr.device)
-                graph.y = teacher_mean_labels(Pr[pmr].double(), assign, len(h), sel).float().to(args.device)
+                if SELF_RATIOS:
+                    args.ratio = SELF_RATIOS[rnd - 1]
+                    args, _ = generate_labels_syn(args, data)
+                    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
+                    hl = label_feats(args.label_feat, h_d)
+                    sel = (~tr_pool.to(h.device)) if args.avg_pool == 'unlabeled' else None
+                    graph = Data(x=h, y=None, edge_index=torch.eye(len(h)).nonzero().t().to(h.device),
+                                 edge_attr=torch.ones(len(h), device=h.device),
+                                 train_mask=torch.ones(len(h), dtype=torch.bool, device=h.device))
+                    print(f'round {rnd}: re-condensed at ratio {args.ratio:g} -> {len(h)} nodes')
+                Pp_r = Pr[pmr].double()
+                if args.self_consistent:
+                    pf_r = label_feats(args.label_feat, pool_d)
+                    W_r = fit_probe_W(pf_r, Pp_r, args.gamma, args.ce_steps)[0]
+                    Pp_r = F.softmax(pf_r.double() @ W_r, dim=1)
+                    pc = lambda msk: (100 * (F.softmax(H_all.double() @ W_r, 1).argmax(1)[msk.to(H_all.device)]
+                                            == data.y.to(H_all.device)[msk.to(H_all.device)]).double().mean()).item()
+                    print(f'round {rnd}: consistent probe of ensemble  train {pc(data.train_mask):.2f}%'
+                          + (f'  test {pc(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
+                graph.y = teacher_mean_labels(Pp_r, assign, len(h), sel).float().to(args.device)
             print(f'round {rnd}: labels maxp {graph.y.max(1)[0].mean():.4f}')
         acc, models = [], []
         for repeat in range(args.repeat):

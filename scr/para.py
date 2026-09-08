@@ -49,6 +49,12 @@ def para():
     parser.add_argument('--self_rounds', type=int, default=0,
                         help='iterated condensation: after each round the ensemble of trained students '
                              'becomes the teacher and the cell-mean labels are recomputed')
+    parser.add_argument('--self_ratios', type=str, default='',
+                        help='comma list of ratios for rounds 1..R: re-condense at each ratio with the '
+                             'previous students as teacher (shrinking schedule); overrides --self_rounds')
+    parser.add_argument('--self_consistent', type=int, default=0,
+                        help='1 = distil the student ensemble into an H-space probe before cell-averaging '
+                             '(keeps the teacher a function of what the next student sees)')
     parser.add_argument('--self_full', type=int, default=0,
                         help='control for --self_rounds: retrain on the FULL graph with the soft pseudo-labels '
                              '(no condensation) instead of on the condensed set')
