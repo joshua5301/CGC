@@ -25,7 +25,7 @@ args, label_cond = generate_labels_syn(args, data)
 H = conv_graph_multi(args, data)
 
 SOFT_MODES = ('closed', 'logistic', 'logistic_mean', 'probe', 'probe_mean', 'ridge',
-              'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'cs', 'cs_loss')
+              'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'mlp_mean', 'cs', 'cs_loss')
 if (args.label_mode in SOFT_MODES and args.head == 'mse'
         and 'head' not in getattr(args, 'explicit', set())):
     args.head = 'ce'
@@ -113,7 +113,7 @@ else:
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
-                             'ridge', 'ridge_mean', 'restricted', 'weighted', 'gcn_mean'):
+                             'ridge', 'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'mlp_mean'):
         prior, sel = None, None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -130,7 +130,23 @@ else:
                       f'({keep / max(len(hl), 1):.0f} per landmark)')
                 if keep == 0:
                     raise SystemExit('avg_pool unlabeled: no unlabeled node in the pool')
-        if args.label_mode == 'gcn_mean':
+        if args.label_mode == 'mlp_mean':
+            if assign is None:
+                raise SystemExit('mlp_mean needs a cluster assignment')
+            tf = fit_mlp_teacher(H_fit, T_fit, args.n_dim, 500, 1e-2, args.weight_decay,
+                                 args.dropout, args.seed)
+            with torch.no_grad():
+                P = F.softmax(tf(pf), dim=1).double()
+                tp = tf(H_all).argmax(1)
+            yd = data.y.to(tp.device)
+            ta = lambda m: (100 * (tp[m.to(tp.device)] == yd[m.to(tp.device)]).double().mean()).item()
+            print(f'teacher[mlp]: train {ta(data.train_mask):.2f}%'
+                  + (f'  val {ta(data.val_mask):.2f}%  test {ta(data.test_mask):.2f}%'
+                     if hasattr(data, 'val_mask') else ''))
+            Y = teacher_mean_labels(P, assign, len(hl), sel)
+            ctx = {'loss': float('nan'), 'gnorm': 0.0,
+                   'rank': int(torch.linalg.matrix_rank(hl)), 'P': P}
+        elif args.label_mode == 'gcn_mean':
             if assign is None:
                 raise SystemExit('gcn_mean needs a cluster assignment')
             print('teacher[gcn]: training on the full graph')
@@ -191,6 +207,13 @@ else:
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
+        if args.feat_sub:
+            Wl = ctx['W'] if 'W' in ctx else fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
+            Bq = torch.linalg.qr(Wl.double().to(h.device))[0].float()
+            res = (h - h @ Bq @ Bq.T).norm() / h.norm()
+            h = h @ Bq @ Bq.T
+            print(f'feat_sub: rank {Bq.shape[1]}  dropped energy {res ** 2:.3f}  '
+                  f'bytes/node {h.shape[1] + Y.shape[1]} -> {2 * Bq.shape[1]} (+{Bq.numel()} shared)')
         if args.cell_k > 0 and pf is not None:
             Pk = (ctx['P'] if 'P' in ctx else
                   F.softmax((pf.double() @ ctx['W']) if 'W' in ctx

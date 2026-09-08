@@ -35,7 +35,7 @@ def para():
                         help='cgc, class_kmeans, kmeans, random, random_split, easy, hard')
     parser.add_argument('--cand_mult', type=float, default=4.0,
                         help='candidate over-generation factor for --landmark easy/hard')
-    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), cs, cs_loss')
+    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), mlp_mean (MLP-on-H teacher), cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '
@@ -43,6 +43,9 @@ def para():
     parser.add_argument('--cell_k', type=int, default=0,
                         help='overlapping cells: average features/labels over the K nearest pool '
                              'nodes of each centre instead of the Voronoi cell (0 = off)')
+    parser.add_argument('--feat_sub', type=int, default=0,
+                        help='1 = project condensed features onto the linear teacher subspace '
+                             'span(W) (rank c); stores c coords/node + shared basis')
     parser.add_argument('--gen', type=float, default=0.0,
                         help='parametric condensation: downstream samples x ~ N(x_j, (gen*s_j)^2) per '
                              'epoch and labels it with the condensed-set teacher; 0 = off')

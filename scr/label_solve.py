@@ -451,6 +451,22 @@ def cell_std(H_pool, assign, n_p):
     return (m2 - m1 * m1).clamp_min(0).sqrt().float()
 
 
+def fit_mlp_teacher(H_L, Y_L, hidden=256, epochs=500, lr=1e-2, wd=5e-4, dropout=0.5, seed=0):
+    torch.manual_seed(seed)
+    d, c = H_L.shape[1], Y_L.shape[1]
+    net = torch.nn.Sequential(torch.nn.Linear(d, hidden), torch.nn.ReLU(), torch.nn.Dropout(dropout),
+                              torch.nn.Linear(hidden, c)).to(H_L.device)
+    opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
+    X, T = H_L.float(), Y_L.float()
+    for ep in range(epochs):
+        if ep == epochs // 2:
+            for g in opt.param_groups: g['lr'] = lr * 0.1
+        net.train(); opt.zero_grad()
+        F.cross_entropy(net(X), T).backward(); opt.step()
+    net.eval()
+    return lambda Z: net(Z.float())
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)
