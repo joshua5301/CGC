@@ -191,6 +191,18 @@ else:
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
+        if args.cell_k > 0 and pf is not None:
+            Pk = (ctx['P'] if 'P' in ctx else
+                  F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
+                            else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1))
+            knn = knn_cells(h, H_pool, min(args.cell_k, len(H_pool)))
+            cover = torch.unique(knn).numel()
+            h = knn_means(H_pool, knn)
+            h_d = [knn_means(E, knn) for E in pool_d]
+            hl = label_feats(args.label_feat, h_d)
+            Y = knn_means(Pk, knn)
+            print(f'cell_k: K={knn.shape[1]}  voronoi mean {len(H_pool) / len(h):.0f}  '
+                  f'pool covered {cover / len(H_pool):.2%}  multiplicity {knn.numel() / cover:.2f}')
         tan = None
         if ((args.tangent > 0 or args.adj_mode == 'tangent' or args.tan_static)
                 and pf is not None and assign is not None):

@@ -432,6 +432,18 @@ def teacher_mean_labels(P, assign, n_p, sel=None):
     return _pool_means(P.double(), assign.to(P.device), n_p, sel)
 
 
+def knn_cells(centres, H_pool, K, chunk=64):
+    idx = []
+    for i in range(0, len(centres), chunk):
+        d = torch.cdist(centres[i:i + chunk].to(H_pool.dtype), H_pool)
+        idx.append(d.topk(K, dim=1, largest=False)[1])
+    return torch.cat(idx)
+
+
+def knn_means(X, idx):
+    return X[idx.to(X.device)].mean(1)
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)

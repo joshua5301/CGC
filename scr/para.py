@@ -40,6 +40,9 @@ def para():
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '
                              'cell principal axis by N(0,(tangent*sigma)^2); 0 = off')
+    parser.add_argument('--cell_k', type=int, default=0,
+                        help='overlapping cells: average features/labels over the K nearest pool '
+                             'nodes of each centre instead of the Voronoi cell (0 = off)')
     parser.add_argument('--tan_frac', type=float, default=1.0,
                         help='keep tangent info only for the top fraction of cells by sigma*|g|')
     parser.add_argument('--tan_rank', type=int, default=0,
