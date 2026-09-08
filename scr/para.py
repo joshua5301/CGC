@@ -83,7 +83,14 @@ def para():
     parser.add_argument('--no_hyperpara', type=int, default=0,
                         help='1 skips the per-dataset hyperpara table entirely')
     parser.add_argument('--preset', type=str, default='', help="'unified' sets the P-based pipeline")
-    parser.add_argument('--adj_mode', type=str, default='cosine', help='cosine, coarsen, commute')
+    parser.add_argument('--adj_mode', type=str, default='cosine',
+                        help='cosine, coarsen, commute, tangent')
+    parser.add_argument('--tan_edge_k', type=int, default=2,
+                        help='tangent adj: max neighbours per direction')
+    parser.add_argument('--tan_edge_T', type=float, default=1.0,
+                        help='tangent adj: keep neighbour if within T*sigma_j of the query point')
+    parser.add_argument('--relabel', type=int, default=0,
+                        help='1 = re-evaluate teacher at the A-propagated position (cell mean kept)')
     parser.add_argument('--adj_steps', type=int, default=300)
     parser.add_argument('--adj_lr', type=float, default=0.05)
     parser.add_argument('--adj_l1', type=float, default=0.0)

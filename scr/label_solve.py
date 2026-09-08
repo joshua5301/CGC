@@ -406,6 +406,28 @@ def tangent_stats(H_pool, P, assign, n_p, rank=0, code=0):
     return U.float(), G.float(), S.float(), energy
 
 
+def tangent_adj(h, U, S, k=2, T=1.0):
+    n = h.shape[0]
+    A = torch.zeros(n, n, dtype=h.dtype, device=h.device)
+    rows = torch.arange(n, device=h.device).unsqueeze(1).expand(n, k)
+    for sgn in (1.0, -1.0):
+        d = torch.cdist(h + sgn * S.unsqueeze(1) * U, h)
+        d.fill_diagonal_(float('inf'))
+        val, idx = d.topk(k, dim=1, largest=False)
+        ok = val <= T * S.unsqueeze(1)
+        A[rows[ok], idx[ok]] = 1.0
+    A = torch.maximum(A, A.T)
+    A.fill_diagonal_(0)
+    return A
+
+
+def relabel_shifted(pf, assign, n_p, delta, ctx, basis, sel=None):
+    assign = assign.to(pf.device)
+    Z = pf.double() + delta.double().to(pf.device)[assign]
+    logits = (Z @ ctx['W']) if 'W' in ctx else dual_logits(Z, basis, ctx['dual'])
+    return _pool_means(F.softmax(logits, dim=1), assign, n_p, sel)
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)

@@ -76,9 +76,11 @@ def ratio_transfer(args):
             return 0.005
         if args.ratio == 0.005:
             return 0.01
+        return args.ratio * 2
 
     else:
         return args.ratio
+    return args.ratio * (0.5 / 0.026 if args.dataset_name == 'cora' else 0.5 / 0.018)
     
 
 def conv_graph_multi(args, data):

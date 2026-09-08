@@ -166,7 +166,8 @@ else:
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
         tan = None
-        if args.tangent > 0 and pf is not None and assign is not None:
+        if ((args.tangent > 0 or args.adj_mode == 'tangent')
+                and pf is not None and assign is not None):
             Pp = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
                            else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1)
             *tan, energy = tangent_stats(H_pool, Pp, assign, len(hl), args.tan_rank,
@@ -199,6 +200,13 @@ if args.generate_adj == 1:
         if args.adj_mode == 'commute':
             a = commute_adj(h_d, args.conv_depth, args.adj_steps, args.adj_lr, args.adj_l1,
                             a if args.adj_init == 'coarsen' else None).float()
+    elif args.adj_mode == 'tangent':
+        if tan is None:
+            raise SystemExit('adj_mode tangent needs a *_mean label mode with a cluster assignment')
+        a = tangent_adj(h, tan[0].to(h.device), tan[2].to(h.device), args.tan_edge_k, args.tan_edge_T)
+        deg = (a > 0).sum(1)
+        print(f'tangent adj: {int((a > 0).sum()) // 2} undirected edges  '
+              f'{int((deg > 0).sum())}/{len(h)} nodes connected  mean deg {deg.float().mean():.2f}')
     else:
         a = get_adj(h, args.adj_T)
     if args.cond_feat == 'raw':
@@ -211,10 +219,19 @@ if args.generate_adj == 1:
         res = commutation_residual(normalize_adj_tensor(a), [x] + h_d[1:])
         print('commute resid: ' + '  '.join(f'k={i+1}:{r:.4f}' for i, r in enumerate(res))
               + f'   #edges: {int((a > 0).sum())}')
+    if args.relabel and pf is not None and assign is not None:
+        Ah, Xp = normalize_adj_tensor(a).to(x.device), x
+        for _ in range(args.conv_depth):
+            Xp = Ah @ Xp
+        delta = Xp - h.to(x.device)
+        label_cond = relabel_shifted(pf, assign, len(h), delta, ctx, ctx.get('basis', hl),
+                                     sel).float().to(args.device)
+        print(f'relabel: mean shift {delta.norm(dim=1).mean():.4f}  '
+              f'maxp {label_cond.max(1)[0].mean():.4f}')
     graph = Data(x=x, y=label_cond, edge_index=a.nonzero().t(), edge_attr=a[a.nonzero()[:,0], a.nonzero()[:,1]], train_mask=torch.ones(len(x), dtype=torch.bool))
 else:
     graph = Data(x=h, y=label_cond, edge_index=torch.eye(len(h)).nonzero().t(), edge_attr=torch.ones(len(h)), train_mask=torch.ones(len(h), dtype=torch.bool))
-    if tan is not None:
+    if tan is not None and args.tangent > 0:
         graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
 
 args.cond_time = time.time()-begin
