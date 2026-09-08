@@ -107,7 +107,7 @@ else:
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
-                             'ridge', 'ridge_mean', 'restricted', 'weighted'):
+                             'ridge', 'ridge_mean', 'restricted', 'weighted', 'gcn_mean'):
         prior, sel = None, None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -124,7 +124,27 @@ else:
                       f'({keep / max(len(hl), 1):.0f} per landmark)')
                 if keep == 0:
                     raise SystemExit('avg_pool unlabeled: no unlabeled node in the pool')
-        if args.label_mode == 'weighted':
+        if args.label_mode == 'gcn_mean':
+            if assign is None:
+                raise SystemExit('gcn_mean needs a cluster assignment')
+            print('teacher[gcn]: training on the full graph')
+            tm = GNN('gcn', data.num_features, args.n_dim, args.num_class, 2,
+                     args.dropout).to(args.device)
+            model_training(tm, args, data, data.to(args.device), data_val, data_test)
+            tm.eval()
+            with torch.no_grad():
+                Pfull = tm(data.to(args.device)).exp()
+            pm = pool_mask(args, data, len(data.y), args.device).to(Pfull.device)
+            yd, tp = data.y.to(Pfull.device), Pfull.argmax(1)
+            ta = lambda m: (100 * (tp[m.to(Pfull.device)] == yd[m.to(Pfull.device)]).double().mean()).item()
+            print(f'teacher[gcn]: train {ta(data.train_mask):.2f}%'
+                  + (f'  val {ta(data.val_mask):.2f}%  test {ta(data.test_mask):.2f}%'
+                     if hasattr(data, 'val_mask') else ''))
+            P = Pfull[pm].double()
+            Y = teacher_mean_labels(P, assign, len(hl), sel)
+            ctx = {'loss': float('nan'), 'gnorm': 0.0,
+                   'rank': int(torch.linalg.matrix_rank(hl)), 'P': P}
+        elif args.label_mode == 'weighted':
             W0 = fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
             P = F.softmax(pf.double() @ W0, dim=1)
             Y, ctx, wm = solve_labels_weighted(
@@ -168,7 +188,7 @@ else:
         tan = None
         if ((args.tangent > 0 or args.adj_mode == 'tangent' or args.tan_static)
                 and pf is not None and assign is not None):
-            Pp = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
+            Pp = ctx['P'] if 'P' in ctx else F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
                            else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1)
             *tan, energy = tangent_stats(H_pool, Pp, assign, len(hl), args.tan_rank,
                                          args.tan_code)
@@ -256,7 +276,7 @@ else:
 args.cond_time = time.time()-begin
 print('Condensation time:',  f'{args.cond_time:.3f}', 's')
 print('#edges:', int(torch.sum(a).item())) if args.generate_adj == 1 else print('No adj')
-print('#nodes:', len(h))
+print('#nodes:', graph.num_nodes)
 print('#training labels:', data.train_mask.sum().item())
 print('#pool:', n_pool)
 args.changed_label = n_pool-data.train_mask.sum().item()

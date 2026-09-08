@@ -428,6 +428,10 @@ def relabel_shifted(pf, assign, n_p, delta, ctx, basis, sel=None):
     return _pool_means(F.softmax(logits, dim=1), assign, n_p, sel)
 
 
+def teacher_mean_labels(P, assign, n_p, sel=None):
+    return _pool_means(P.double(), assign.to(P.device), n_p, sel)
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)
