@@ -359,11 +359,36 @@ args.changed_label = n_pool-data.train_mask.sum().item()
 graph=graph.to(args.device)
 ARCHS = ['gcn', 'sage', 'gat', 'cheby', 'appnp'] if args.test_gnn == 'all'     else [k.strip().lower() for k in args.test_gnn.split(',') if k.strip()]
 for arch in ARCHS:
-    acc = []
-    for repeat in range(args.repeat):
-        model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout,
-                    logits=(args.head == 'mse_logit')).to(args.device)
-        acc.append(model_training(model, args, data, graph, data_val, data_test))
+    acc, models = [], []
+    for rnd in range(args.self_rounds + 1):
+        if rnd > 0:
+            dd = data.to(args.device)
+            with torch.no_grad():
+                for m in models: m.eval()
+                Pr = torch.stack([m(dd).exp() for m in models]).mean(0)
+            yd = dd.y
+            ra = lambda msk: (100 * (Pr.argmax(1)[msk] == yd[msk]).double().mean()).item()
+            print(f'round {rnd}: teacher = ensemble of {len(models)} students  train {ra(dd.train_mask):.2f}%'
+                  + (f'  test {ra(dd.test_mask):.2f}%' if hasattr(dd, 'test_mask') else ''))
+            if args.self_full:
+                graph = Data(x=dd.x, y=Pr.float(), edge_index=dd.edge_index,
+                             edge_attr=getattr(dd, 'edge_attr', None),
+                             train_mask=torch.ones(len(dd.x), dtype=torch.bool, device=args.device))
+            else:
+                if assign is None or graph.num_nodes != len(h):
+                    raise SystemExit('self_rounds needs a plain cell-mean condensed set')
+                pmr = pool_mask(args, data, len(data.y), args.device).to(Pr.device)
+                graph.y = teacher_mean_labels(Pr[pmr].double(), assign, len(h), sel).float().to(args.device)
+            print(f'round {rnd}: labels maxp {graph.y.max(1)[0].mean():.4f}')
+        acc, models = [], []
+        for repeat in range(args.repeat):
+            model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout,
+                        logits=(args.head == 'mse_logit')).to(args.device)
+            acc.append(model_training(model, args, data, graph, data_val, data_test))
+            models.append(model)
+        if args.self_rounds:
+            print(f'== round {rnd} {arch}: {100*np.mean(acc):.2f} +- '
+                  f'{100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
     args.test_gnn = arch
     print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
     result_record(args, acc)

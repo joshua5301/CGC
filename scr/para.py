@@ -46,6 +46,12 @@ def para():
     parser.add_argument('--feat_sub', type=int, default=0,
                         help='1 = project condensed features onto the linear teacher subspace '
                              'span(W) (rank c); stores c coords/node + shared basis')
+    parser.add_argument('--self_rounds', type=int, default=0,
+                        help='iterated condensation: after each round the ensemble of trained students '
+                             'becomes the teacher and the cell-mean labels are recomputed')
+    parser.add_argument('--self_full', type=int, default=0,
+                        help='control for --self_rounds: retrain on the FULL graph with the soft pseudo-labels '
+                             '(no condensation) instead of on the condensed set')
     parser.add_argument('--gen_static', type=int, default=0,
                         help='materialise K teacher-labelled draws x_j + s_j*eps per cell as static '
                              'nodes (centroids dropped); 0 = off')
