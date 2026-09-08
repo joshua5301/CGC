@@ -40,6 +40,8 @@ def para():
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '
                              'cell principal axis by N(0,(tangent*sigma)^2); 0 = off')
+    parser.add_argument('--tan_frac', type=float, default=1.0,
+                        help='keep tangent info only for the top fraction of cells by sigma*|g|')
     parser.add_argument('--tan_rank', type=int, default=0,
                         help='project cell directions onto a shared rank-r basis (0 = full)')
     parser.add_argument('--tan_code', type=int, default=0,

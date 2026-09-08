@@ -199,10 +199,18 @@ else:
             *tan, energy = tangent_stats(H_pool, Pp, assign, len(hl), args.tan_rank,
                                          args.tan_code)
             d0, c0, r0, k0 = h.shape[1], Y.shape[1], args.tan_rank, args.tan_code
-            per = d0 + c0 + (1 if k0 > 0 else r0 if r0 > 0 else d0) + c0 + 1
+            n_tan = len(hl)
+            if args.tan_frac < 1:
+                score = tan[2] * tan[1].norm(dim=1)
+                n_tan = max(int(round(args.tan_frac * len(hl))), 1)
+                drop = score.argsort(descending=True)[n_tan:]
+                tan[2][drop] = 0.0
+                print(f'tangent frac: kept {n_tan}/{len(hl)} cells  '
+                      f'score cut {score.sort(descending=True)[0][n_tan - 1]:.4f}')
+            per = d0 + c0 + (n_tan / len(hl)) * ((1 if k0 > 0 else r0 if r0 > 0 else d0) + c0 + 1)
             shared = d0 * (k0 if k0 > 0 else r0)
             print(f'tangent: sigma mean {tan[2].mean():.4f}  |g| mean {tan[1].norm(dim=1).mean():.4f}  '
-                  f'bytes/node {d0 + c0} -> {per} (+{shared} shared)')
+                  f'bytes/node {d0 + c0} -> {per:.0f} (+{shared} shared)')
             print('tangent basis energy: ' + '  '.join(
                 f'r={r}:{energy[min(r, len(energy)) - 1]:.3f}' for r in (4, 8, 16, 32, 64)))
         print(f'cfg: beta={args.beta:g} whiten={args.whiten:g} kernel={args.label_kernel} '
