@@ -359,6 +359,7 @@ args.changed_label = n_pool-data.train_mask.sum().item()
 graph=graph.to(args.device)
 ARCHS = ['gcn', 'sage', 'gat', 'cheby', 'appnp'] if args.test_gnn == 'all'     else [k.strip().lower() for k in args.test_gnn.split(',') if k.strip()]
 SELF_RATIOS = [float(r) for r in args.self_ratios.split(',') if r.strip()]
+H0_ENT = mean_entropy(graph.y.double()) if graph.y.dim() > 1 else None
 if SELF_RATIOS:
     args.self_rounds = len(SELF_RATIOS)
 for arch in ARCHS:
@@ -405,7 +406,11 @@ for arch in ARCHS:
                                             == data.y.to(H_all.device)[msk.to(H_all.device)]).double().mean()).item()
                     print(f'round {rnd}: consistent probe of ensemble  train {pc(data.train_mask):.2f}%'
                           + (f'  test {pc(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
-                graph.y = teacher_mean_labels(Pp_r, assign, len(h), sel).float().to(args.device)
+                Ynew = teacher_mean_labels(Pp_r, assign, len(h), sel)
+                if args.self_entropy and H0_ENT is not None:
+                    Ynew, T_r = match_entropy(Ynew, H0_ENT)
+                    print(f'round {rnd}: entropy re-tempered  T={T_r:.3f}')
+                graph.y = Ynew.float().to(args.device)
             print(f'round {rnd}: labels maxp {graph.y.max(1)[0].mean():.4f}')
         acc, models = [], []
         if args.self_student == 'probe' and rnd < args.self_rounds:

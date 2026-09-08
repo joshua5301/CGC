@@ -467,6 +467,24 @@ def fit_mlp_teacher(H_L, Y_L, hidden=256, epochs=500, lr=1e-2, wd=5e-4, dropout=
     return lambda Z: net(Z.float())
 
 
+def mean_entropy(P):
+    P = P.clamp_min(1e-12)
+    return float(-(P * P.log()).sum(1).mean())
+
+
+def match_entropy(P, target, iters=40):
+    logp = P.clamp_min(1e-12).log()
+    lo, hi = 1e-3, 1e3
+    for _ in range(iters):
+        T = (lo * hi) ** 0.5
+        if mean_entropy(F.softmax(logp / T, dim=1)) > target:
+            hi = T
+        else:
+            lo = T
+    T = (lo * hi) ** 0.5
+    return F.softmax(logp / T, dim=1), T
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)

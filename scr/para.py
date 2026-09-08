@@ -55,6 +55,9 @@ def para():
     parser.add_argument('--self_student', type=str, default='gnn',
                         help="gnn (default) or 'probe': between rounds fit a linear probe on the condensed "
                              "set instead of training GNNs; GNNs are trained only for the final evaluation")
+    parser.add_argument('--self_entropy', type=int, default=0,
+                        help='1 = after each round re-temper the labels so their mean entropy equals '
+                             'that of round 0 (prevents smoothing collapse)')
     parser.add_argument('--self_consistent', type=int, default=0,
                         help='1 = distil the student ensemble into an H-space probe before cell-averaging '
                              '(keeps the teacher a function of what the next student sees)')
