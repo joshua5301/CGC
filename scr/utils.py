@@ -385,7 +385,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
         if tan > 0 and hasattr(graph, 'u'):
             t = torch.randn(len(graph.x), 1, device=graph.x.device) * graph.sig.unsqueeze(1) * tan
             g2 = Data(x=graph.x + t * graph.u, edge_index=graph.edge_index, edge_attr=graph.edge_attr)
-            y = (graph.y + t * graph.g).clamp_min(0)
+            y = (graph.y + t * graph.g).clamp_min(0) if getattr(args, 'tan_label', 1) else graph.y
             y = (y / y.sum(1, keepdim=True).clamp_min(1e-12))[graph.train_mask]
             loss = soft_loss(model(g2)[graph.train_mask], y, args.head)
         elif mix > 0:

@@ -44,6 +44,12 @@ def para():
                         help='project cell directions onto a shared rank-r basis (0 = full)')
     parser.add_argument('--tan_code', type=int, default=0,
                         help='codebook of K shared directions; each cell stores one index (0 = off)')
+    parser.add_argument('--tan_label', type=int, default=1,
+                        help='tangent: 1 = move label with g_j (condition C), 0 = input only (B)')
+    parser.add_argument('--tan_static', type=int, default=0,
+                        help='1 = centre + two endpoints x_j +- sigma_j u_j as nodes, 2 = endpoints only')
+    parser.add_argument('--tan_static_edge', type=int, default=0,
+                        help='1 = also connect each endpoint to its centre (star)')
     parser.add_argument('--mixup', type=float, default=0.0,
                         help='downstream mixup Beta(a,a) on the condensed set; 0 = off')
     parser.add_argument('--lam_p', type=float, default=0.0,

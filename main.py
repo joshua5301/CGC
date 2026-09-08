@@ -166,7 +166,7 @@ else:
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
         tan = None
-        if ((args.tangent > 0 or args.adj_mode == 'tangent')
+        if ((args.tangent > 0 or args.adj_mode == 'tangent' or args.tan_static)
                 and pf is not None and assign is not None):
             Pp = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
                            else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1)
@@ -230,8 +230,27 @@ if args.generate_adj == 1:
               f'maxp {label_cond.max(1)[0].mean():.4f}')
     graph = Data(x=x, y=label_cond, edge_index=a.nonzero().t(), edge_attr=a[a.nonzero()[:,0], a.nonzero()[:,1]], train_mask=torch.ones(len(x), dtype=torch.bool))
 else:
-    graph = Data(x=h, y=label_cond, edge_index=torch.eye(len(h)).nonzero().t(), edge_attr=torch.ones(len(h)), train_mask=torch.ones(len(h), dtype=torch.bool))
-    if tan is not None and args.tangent > 0:
+    xs, ys, n0 = h, label_cond.to(h.device), len(h)
+    ei = torch.eye(n0).nonzero().t()
+    if args.tan_static and tan is not None:
+        U, G, S = [t.to(h.device) for t in tan]
+        dx, dy = S.unsqueeze(1) * U, S.unsqueeze(1) * G
+        nrm = lambda Y: (Y.clamp_min(0) / Y.clamp_min(0).sum(1, keepdim=True).clamp_min(1e-12))
+        keep_c = args.tan_static == 1
+        xs = torch.cat(([h] if keep_c else []) + [h + dx, h - dx])
+        ys = torch.cat(([ys] if keep_c else []) + [nrm(ys + dy), nrm(ys - dy)])
+        ei = torch.eye(len(xs)).nonzero().t()
+        if args.tan_static_edge and keep_c:
+            j = torch.arange(n0)
+            star = torch.stack([torch.cat([j, j, j + n0, j + 2 * n0]),
+                                torch.cat([j + n0, j + 2 * n0, j, j])])
+            ei = torch.cat([ei, star], dim=1)
+        print(f'static endpoints: {n0 if keep_c else 0} centres + {2 * n0} endpoints'
+              + ('  (star edges)' if args.tan_static_edge else '  (no edges)')
+              + f'  maxp {ys.max(1)[0].mean():.4f}')
+    graph = Data(x=xs, y=ys, edge_index=ei.to(h.device), edge_attr=torch.ones(ei.shape[1], device=h.device),
+                 train_mask=torch.ones(len(xs), dtype=torch.bool, device=h.device))
+    if tan is not None and args.tangent > 0 and not args.tan_static:
         graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
 
 args.cond_time = time.time()-begin
