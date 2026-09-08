@@ -298,6 +298,19 @@ else:
                  train_mask=torch.ones(len(xs), dtype=torch.bool, device=h.device))
     if tan is not None and args.tangent > 0 and not args.tan_static:
         graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
+    if args.gen > 0:
+        if assign is None or not ('W' in ctx or 'dual' in ctx):
+            raise SystemExit('--gen needs a *_mean label mode with an explicit teacher (probe/logistic)')
+        graph.sd = cell_std(H_pool, assign, len(h)).to(h.device)
+        if 'W' in ctx:
+            Wt = ctx['W'].float().to(h.device)
+            graph.teacher = lambda x: x @ Wt
+        else:
+            basis = ctx.get('basis', hl).to(h.device)
+            dual = ctx['dual']
+            graph.teacher = lambda x: dual_logits(x, basis, dual).float()
+        print(f'gen: per-cell std mean {graph.sd.mean():.4f}  bytes/node '
+              f'{h.shape[1] + label_cond.shape[1]} -> {2 * h.shape[1] + label_cond.shape[1]}')
 
 args.cond_time = time.time()-begin
 print('Condensation time:',  f'{args.cond_time:.3f}', 's')

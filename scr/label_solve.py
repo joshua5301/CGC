@@ -444,6 +444,13 @@ def knn_means(X, idx):
     return X[idx.to(X.device)].mean(1)
 
 
+def cell_std(H_pool, assign, n_p):
+    H = H_pool.double()
+    a = assign.to(H.device)
+    m1, m2 = _pool_means(H, a, n_p), _pool_means(H * H, a, n_p)
+    return (m2 - m1 * m1).clamp_min(0).sqrt().float()
+
+
 def _wmean(pi, X, assign, n_p):
     return torch.zeros(n_p, X.shape[1], dtype=X.dtype, device=X.device).index_add_(
         0, assign, pi.unsqueeze(1) * X)

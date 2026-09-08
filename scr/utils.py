@@ -382,7 +382,14 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
 
         model.train()
         mix, tan = getattr(args, 'mixup', 0.0), getattr(args, 'tangent', 0.0)
-        if tan > 0 and hasattr(graph, 'u'):
+        gen = getattr(args, 'gen', 0.0)
+        if gen > 0 and hasattr(graph, 'sd'):
+            xs = graph.x + gen * graph.sd * torch.randn_like(graph.x)
+            with torch.no_grad():
+                ys = F.softmax(graph.teacher(xs), dim=1)
+            g2 = Data(x=xs, edge_index=graph.edge_index, edge_attr=graph.edge_attr)
+            loss = soft_loss(model(g2)[graph.train_mask], ys[graph.train_mask], args.head)
+        elif tan > 0 and hasattr(graph, 'u'):
             t = torch.randn(len(graph.x), 1, device=graph.x.device) * graph.sig.unsqueeze(1) * tan
             g2 = Data(x=graph.x + t * graph.u, edge_index=graph.edge_index, edge_attr=graph.edge_attr)
             y = (graph.y + t * graph.g).clamp_min(0) if getattr(args, 'tan_label', 1) else graph.y
