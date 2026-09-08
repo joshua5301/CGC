@@ -24,6 +24,12 @@ begin = time.time()
 args, label_cond = generate_labels_syn(args, data)
 H = conv_graph_multi(args, data)
 
+SOFT_MODES = ('closed', 'logistic', 'logistic_mean', 'probe', 'probe_mean', 'ridge',
+              'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'cs', 'cs_loss')
+if (args.label_mode in SOFT_MODES and args.head == 'mse'
+        and 'head' not in getattr(args, 'explicit', set())):
+    args.head = 'ce'
+    print('note: soft labels -> downstream head set to ce (pass --head to override)')
 tan = None
 if args.landmark == 'cgc':
     model = linear_model(args, H, data, data_test)
