@@ -217,10 +217,107 @@ def posterior_feats(H, P, lam):
     return torch.cat([r(H), lam * r(P.to(H.dtype))], dim=1)
 
 
-def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None):
+def herding_select(H, k):
+    """Class-agnostic herding: greedily pick nodes whose running mean tracks the pool mean."""
+    Hd = H.double()
+    mu = Hd.mean(0)
+    run = torch.zeros_like(mu)
+    taken = torch.zeros(len(Hd), dtype=torch.bool, device=H.device)
+    picked = []
+    for t in range(int(k)):
+        d = (((run + Hd) / (t + 1) - mu) ** 2).sum(1)
+        d[taken] = float('inf')
+        i = int(d.argmin())
+        taken[i] = True
+        run = run + Hd[i]
+        picked.append(i)
+    return torch.tensor(picked, dtype=torch.long, device=H.device)
+
+
+def kcenter_select(H, k):
+    """Greedy farthest-point (k-center) selection, seeded at the node nearest the mean."""
+    Hd = H.double()
+    first = int(((Hd - Hd.mean(0)) ** 2).sum(1).argmin())
+    picked = [first]
+    dmin = ((Hd - Hd[first]) ** 2).sum(1)
+    for _ in range(int(k) - 1):
+        i = int(dmin.argmax())
+        picked.append(i)
+        dmin = torch.minimum(dmin, ((Hd - Hd[i]) ** 2).sum(1))
+    return torch.tensor(picked, dtype=torch.long, device=H.device)
+
+
+def _pool_edges(edge_index, mask, n_pool):
+    """Edges of the induced subgraph on the pool, relabelled to pool indices (numpy)."""
+    dev = mask.device
+    n2l = torch.full((mask.shape[0],), -1, dtype=torch.long, device=dev)
+    n2l[mask] = torch.arange(n_pool, device=dev)
+    r, c = n2l[edge_index[0].to(dev)], n2l[edge_index[1].to(dev)]
+    ok = (r >= 0) & (c >= 0) & (r != c)
+    return r[ok].cpu().numpy(), c[ok].cpu().numpy()
+
+
+def metis_partition(edge_index, mask, n_pool, k):
+    """Structure-only cells from METIS (pymetis, or torch_sparse's partition as fallback)."""
+    import scipy.sparse as sp
+    r, c = _pool_edges(edge_index, mask, n_pool)
+    A = sp.coo_matrix((np.ones(len(r)), (r, c)), shape=(n_pool, n_pool)).tocsr()
+    A = ((A + A.T) > 0).astype(np.int64).tocsr()
+    try:
+        import pymetis
+        _, part = pymetis.part_graph(int(k), xadj=A.indptr.astype(np.int64),
+                                     adjncy=A.indices.astype(np.int64))
+        return torch.tensor(part, dtype=torch.long)
+    except ImportError:
+        pass
+    try:
+        import torch_sparse  # noqa: F401  registers torch.ops.torch_sparse.partition
+        rowptr = torch.from_numpy(A.indptr.astype(np.int64))
+        col = torch.from_numpy(A.indices.astype(np.int64))
+        return torch.ops.torch_sparse.partition(rowptr, col, None, int(k), False)
+    except (ImportError, RuntimeError, AttributeError):
+        raise SystemExit('--landmark metis needs pymetis (pip install pymetis) '
+                         'or torch_sparse built with METIS')
+
+
+def vng_partition(edge_index, mask, n_pool, k, K=10):
+    """Loukas variation-neighbourhoods coarsening (needs `pip install graph-coarsening pygsp`)."""
+    try:
+        from graph_coarsening import coarsen
+        from pygsp import graphs
+    except ImportError:
+        raise SystemExit('--landmark vng needs: pip install pygsp '
+                         'git+https://github.com/loukasa/graph-coarsening')
+    import scipy
+    import scipy.sparse as sp
+    for name in ('newaxis', 'sqrt', 'floor', 'ceil', 'zeros', 'ones', 'array', 'inf'):
+        if not hasattr(scipy, name):  # old numpy aliases the library still uses
+            setattr(scipy, name, getattr(np, name))
+    r, c = _pool_edges(edge_index, mask, n_pool)
+    W = sp.coo_matrix((np.ones(len(r)), (r, c)), shape=(n_pool, n_pool))
+    W = ((W + W.T) > 0).astype(np.float64).tocsr()
+    G = graphs.Graph(W)
+    C, _, _, _ = coarsen(G, K=K, r=1.0 - float(k) / n_pool,
+                         method='variation_neighborhoods', max_levels=30)
+    coo = C.tocoo()
+    assign = np.full(n_pool, -1, dtype=np.int64)
+    assign[coo.col] = coo.row
+    if (assign < 0).any():
+        raise SystemExit('vng: some nodes were not assigned to a supernode')
+    return torch.tensor(assign, dtype=torch.long)
+
+
+
+def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None):
     n_p = int(args.budget)
-    if args.landmark == 'random':
-        idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
+    if args.landmark in ('random', 'herding', 'kcenter'):
+        Hs = H_pool if Hc is None else Hc
+        if args.landmark == 'herding':
+            idx = herding_select(Hs, n_p)
+        elif args.landmark == 'kcenter':
+            idx = kcenter_select(Hs, n_p)
+        else:
+            idx = torch.randperm(len(H_pool), device=H_pool.device)[:n_p]
         Hw = _whiten(H_pool if Hc is None else Hc, getattr(args, 'whiten', 0.0))
         assign = torch.cdist(Hw, Hw[idx]).argmin(1)
         assign[idx] = torch.arange(len(idx), device=assign.device)
@@ -232,6 +329,14 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None):
             m = (y_pool == cls)
             assign[m.cpu()] = _assign(Hw[m], args.budget_cla[cls], args.clustering) + k
             k += int(args.budget_cla[cls])
+    elif args.landmark in ('metis', 'vng'):
+        if graph is None:
+            raise SystemExit(f'--landmark {args.landmark} needs the pool graph')
+        ei, mask = graph
+        part = metis_partition if args.landmark == 'metis' else vng_partition
+        assign = part(ei, mask, len(H_pool), n_p)
+        k = int(assign.max()) + 1
+        print(f'landmark[{args.landmark}]: {k} structural cells (budget {n_p})')
     else:
         method = 'nocluster' if args.landmark == 'random_split' else args.clustering
         assign, k = _assign(Hw, n_p, method), n_p

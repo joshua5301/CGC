@@ -53,7 +53,8 @@ else:
         Hc = posterior_feats(pf0, P0, args.lam_p)
         print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
               f'(lam={args.lam_p:g})')
-    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc)
+    pg = (data.edge_index, pool_mask(args, data, len(data.y), H_pool.device))
+    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc, graph=pg)
     n_cand, args.budget = len(h), n_keep
 
     y_L = data.y[data.train_mask]
@@ -390,7 +391,7 @@ for arch in ARCHS:
                 if SELF_RATIOS:
                     args.ratio = SELF_RATIOS[rnd - 1]
                     args, _ = generate_labels_syn(args, data)
-                    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d)
+                    h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, graph=pg)
                     hl = label_feats(args.label_feat, h_d)
                     sel = (~tr_pool.to(h.device)) if args.avg_pool == 'unlabeled' else None
                     graph = Data(x=h, y=None, edge_index=torch.eye(len(h)).nonzero().t().to(h.device),
