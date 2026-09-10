@@ -212,6 +212,22 @@ def _assign(H, k, method):
     return torch.from_numpy(np.ascontiguousarray(labels)).long()
 
 
+def multiscale_feats(depths, mode, hp_w=1.0, K=None):
+    """Clustering-only feature space built from the propagation depths [X, AX, A^2X, ...].
+    last: A^K X | concat: all depths | multi: all depths + high-pass (I-A)X, (I-A)^2 X.
+    Every block is rescaled to unit mean row norm so no scale dominates k-means."""
+    r = lambda A: A / A.norm(dim=1).mean().clamp_min(1e-12)
+    if mode == 'last':
+        return depths[-1]
+    blocks = [r(D) for D in depths]
+    if mode == 'multi':
+        X, AX = depths[0], depths[1]
+        blocks.append(hp_w * r(X - AX))
+        if len(depths) > 2:
+            blocks.append(hp_w * r(X - 2 * AX + depths[2]))
+    return torch.cat(blocks, dim=1)
+
+
 def posterior_feats(H, P, lam):
     r = lambda A: A / A.norm(dim=1).mean().clamp_min(1e-12)
     return torch.cat([r(H), lam * r(P.to(H.dtype))], dim=1)
@@ -531,6 +547,26 @@ def relabel_shifted(pf, assign, n_p, delta, ctx, basis, sel=None):
     Z = pf.double() + delta.double().to(pf.device)[assign]
     logits = (Z @ ctx['W']) if 'W' in ctx else dual_logits(Z, basis, ctx['dual'])
     return _pool_means(F.softmax(logits, dim=1), assign, n_p, sel)
+
+
+def cell_diag(P, assign, n_p, tag=''):
+    """Within-cell variance of the teacher posterior and the cell-size distribution."""
+    P = P.double()
+    assign = assign.to(P.device)
+    Y = _pool_means(P, assign, n_p)
+    cnt = torch.bincount(assign, minlength=n_p).double()
+    keep = cnt > 0
+    remap = torch.full((n_p,), -1, dtype=torch.long, device=P.device)
+    remap[keep] = torch.arange(int(keep.sum()), device=P.device)
+    resid = ((P - Y[remap[assign]]) ** 2).sum(1)
+    tot = ((P - P.mean(0)) ** 2).sum(1).mean()
+    c = cnt[keep].sort()[0]
+    q = lambda f: int(c[min(int(f * (len(c) - 1)), len(c) - 1)])
+    small = (cnt[keep] < 10).sum().item()
+    print(f'cell diag{tag}: within-var {resid.mean():.4f} ({100 * resid.mean() / tot:.1f}% of total)  '
+          f'cells {int(keep.sum())}  size min/p10/med/p90/max {q(0)}/{q(.1)}/{q(.5)}/{q(.9)}/{q(1)}  '
+          f'cells<10: {small}  pool in largest {100 * c[-1] / cnt.sum():.1f}%')
+    return resid.mean().item()
 
 
 def teacher_mean_labels(P, assign, n_p, sel=None):

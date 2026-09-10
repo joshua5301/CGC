@@ -44,13 +44,17 @@ else:
     if args.landmark in ('easy', 'hard'):
         args.budget = min(int(n_keep * args.cand_mult), len(H_pool))
     Hc = None
+    if args.cluster_feat != 'last':
+        Hc = multiscale_feats(pool_d, args.cluster_feat, args.hp_w)
+        print(f'cluster space[{args.cluster_feat}]: {Hc.shape[1]}d '
+              f'({len(pool_d)} depths' + (f', high-pass w={args.hp_w:g}' if args.cluster_feat == 'multi' else '') + ')')
     if args.lam_p > 0:
         pf0 = label_feats(args.label_feat, pool_d)
         HL0 = label_feats(args.label_feat, depths)[data.train_mask]
         YL0 = F.one_hot(data.y[data.train_mask], args.num_class).to(pf0.dtype)
         W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps)[0]
         P0 = F.softmax(pf0.double() @ W0c, dim=1)
-        Hc = posterior_feats(pf0, P0, args.lam_p)
+        Hc = posterior_feats(pf0 if Hc is None else Hc, P0, args.lam_p)
         print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
               f'(lam={args.lam_p:g})')
     pg = (data.edge_index, pool_mask(args, data, len(data.y), H_pool.device))
@@ -208,6 +212,10 @@ else:
             print(f'expert: train {ea(data.train_mask):.2f}%  '
                   + (f'val {ea(data.val_mask):.2f}%  ' if hasattr(data, 'val_mask') else '')
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
+            if pf is not None and assign is not None:
+                Pd = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
+                               else dual_predictor(ctx.get('basis', hl), ctx['dual'])(pf).double(), dim=1)
+                cell_diag(Pd, assign, len(h))
         if args.feat_sub:
             Wl = ctx['W'] if 'W' in ctx else fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
             Bq = torch.linalg.qr(Wl.double().to(h.device))[0].float()
@@ -417,7 +425,7 @@ for arch in ARCHS:
         if args.self_student == 'probe' and rnd < args.self_rounds:
             continue
         for repeat in range(args.repeat):
-            model = GNN(arch, data.num_features, args.n_dim, args.num_class, 2, args.dropout,
+            model = GNN(arch, data.num_features, args.n_dim, args.num_class, args.gnn_layers, args.dropout,
                         logits=(args.head == 'mse_logit')).to(args.device)
             acc.append(model_training(model, args, data, graph, data_val, data_test))
             models.append(model)

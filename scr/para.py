@@ -20,6 +20,8 @@ def para():
 
     parser.add_argument('--kernel', type=str, default="gcn", help='gcn, ppr, heat, cheby, sage')
     parser.add_argument('--conv_depth', type=int, default=2, help= 'number of conv depth of the original graph')
+    parser.add_argument('--gnn_layers', type=int, default=2,
+                        help='downstream GNN depth (default 2; compare with --conv_depth)')
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
@@ -86,6 +88,10 @@ def para():
                         help='1 = also connect each endpoint to its centre (star)')
     parser.add_argument('--mixup', type=float, default=0.0,
                         help='downstream mixup Beta(a,a) on the condensed set; 0 = off')
+    parser.add_argument('--cluster_feat', type=str, default='last',
+                        help='k-means metric space: last (A^K X), concat (all depths), '
+                             'multi (all depths + high-pass (I-A)X, (I-A)^2X); condensed x stays A^K X')
+    parser.add_argument('--hp_w', type=float, default=1.0, help='weight of the high-pass blocks in --cluster_feat multi')
     parser.add_argument('--lam_p', type=float, default=0.0,
                         help='weight of the teacher posterior block when clustering; '
                              '0 = feature space only (default), large = posterior space')
