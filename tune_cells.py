@@ -58,7 +58,9 @@ grid('arxiv')
 
 # ============ Cell 3: pick by val, rerun with repeat 10 (after all grids finish) =============
 def best_by_val(ds):
-    df = load(); df = df[(df.ds == ds) & (df.tag == 'grid')]
+    df = load()
+    if not len(df): return df
+    df = df[(df.ds == ds) & (df.tag == 'grid')]
     return df.sort_values('val', ascending=False).groupby('ratio').head(1)
 
 MINE = {'A': ['arxiv'], 'B': ['reddit'], 'C': ['flickr', 'cora', 'citeseer']}[SESSION]
@@ -68,7 +70,8 @@ for ds in MINE:
             run(ds, row.ratio, row.gamma, 10, 'final')
 
 # ============ Cell 4: main table (any session) =============
-df = load(); fin = df[df.tag == 'final'].copy()
+df = load(); assert len(df), 'no logs found in Drive'
+fin = df[df.tag == 'final'].copy()
 fin['cell'] = fin.apply(lambda x: f"{x['test']:.1f}±{x['std']:.1f}", axis=1)
 print(fin.pivot(index='ds', columns='ratio', values='cell').to_string())
 print(fin.pivot(index='ds', columns='ratio', values='gamma').to_string())
