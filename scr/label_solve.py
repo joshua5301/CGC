@@ -729,36 +729,31 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
 
 
 def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf'):
-    """Kernel logistic regression in the honest dual: logits K(h,B) A, penalty gamma * tr(A^T K_BB A).
-    One hyperparameter (gamma), no inverse, no ridge. Returns (predictor, A, loss, gnorm)."""
+    """Kernel logistic regression on Nystrom features: phi(h) = K(h,B) L^{-T} with K_BB = L L^T.
+    Then logits = phi(h) W and the RKHS penalty tr(A^T K_BB A) is exactly ||W||^2, so this is
+    fit_probe_W on phi -- same gamma semantics as the linear probe, one hyperparameter, and the
+    optimisation is well conditioned (the raw dual coordinates A are not). Returns (pred, W, loss, gnorm)."""
     H_L, B, Y_L = H_L.double(), B.double(), Y_L.double()
     d = B.shape[1]
     bw = ((B * B).sum(1).mean() / d).clamp(min=1e-12) if kind == 'erf' else None
     if kind == 'rbf':
         D2 = ((B * B).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (B @ B.T))
         bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
-    K_LB = _kernel(H_L, B, kind, d, bw)
     K_BB = _kernel(B, B, kind, d, bw)
     K_BB = (K_BB + K_BB.T) / 2
-    g = gamma * K_BB.diagonal().mean()          # gamma relative to mean feature energy, as in fit_probe_W
-    A = torch.zeros(B.shape[0], Y_L.shape[1], dtype=B.dtype, device=B.device).requires_grad_(True)
-    opt = torch.optim.LBFGS([A], max_iter=steps, history_size=20, tolerance_grad=1e-10,
-                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
-
-    def closure():
-        opt.zero_grad()
-        loss = F.cross_entropy(K_LB @ A, Y_L) + 0.5 * g * (A * (K_BB @ A)).sum()
-        loss.backward()
-        return loss
-
-    opt.step(closure)
-    with torch.enable_grad():
-        loss = closure()
-    gnorm = A.grad.norm().item()
-    A = A.detach()
-    Bf, Af, bwf = B.float(), A.float(), (None if bw is None else float(bw))
-    pred = lambda x: _kernel(x.float().to(Bf.device), Bf, kind, d, bwf) @ Af
-    return pred, A, loss.item(), gnorm
+    jit = 1e-8 * K_BB.diagonal().mean()               # numerical only
+    eye = torch.eye(len(B), dtype=B.dtype, device=B.device)
+    try:
+        L = torch.linalg.cholesky(K_BB + jit * eye)
+    except RuntimeError:
+        L = torch.linalg.cholesky(K_BB + 1e-4 * K_BB.diagonal().mean() * eye)
+    Linv = torch.linalg.solve_triangular(L, eye, upper=False)      # L^{-1}
+    feat = lambda X: _kernel(X.double(), B, kind, d, bw) @ Linv.T   # Nystrom features
+    Phi_L = feat(H_L)
+    W, loss, gnorm = fit_probe_W(Phi_L, Y_L, gamma, steps)
+    Wf, Bf, Lf, bwf = W.float(), B.float(), Linv.T.float(), (None if bw is None else float(bw))
+    pred = lambda x: (_kernel(x.float().to(Bf.device), Bf, kind, d, bwf) @ Lf) @ Wf
+    return pred, W, loss, gnorm
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None):
