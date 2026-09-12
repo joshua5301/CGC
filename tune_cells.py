@@ -69,10 +69,11 @@ for ds in MINE:
 
 # ============ Cell 4: main table (any session) =============
 df = load(); fin = df[df.tag == 'final'].copy()
-fin['cell'] = fin.apply(lambda x: f"{x.test:.1f}±{x.std:.1f}", axis=1)
+fin['cell'] = fin.apply(lambda x: f"{x['test']:.1f}±{x['std']:.1f}", axis=1)
 print(fin.pivot(index='ds', columns='ratio', values='cell').to_string())
 print(fin.pivot(index='ds', columns='ratio', values='gamma').to_string())
 print(fin[['ds', 'ratio', 'gamma', 'val', 'test', 'std']].to_string(index=False))
 # full grid view: val per (ds, ratio, gamma)
 g = df[df.tag == 'grid']
 print(g.pivot_table(index=['ds', 'ratio'], columns='gamma', values='val').round(2).to_string())
+print(g.pivot_table(index=['ds', 'ratio'], columns='gamma', values='test').round(2).to_string())
