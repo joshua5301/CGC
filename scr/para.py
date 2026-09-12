@@ -143,6 +143,8 @@ def para():
     parser.add_argument('--adj_init', type=str, default='zeros', help='zeros, coarsen')
     parser.add_argument('--cond_feat', type=str, default='solve', help='solve, prop, raw')
     parser.add_argument('--whiten', type=float, default=0.0, help='0=none, 1=full; clustering metric only')
+    parser.add_argument('--kernel_prior', type=str, default='value',
+                        help="kernel_mean penalty: 'value' (||f(B)||^2, = logistic_mean's prior, beta-free) or 'rkhs'")
     parser.add_argument('--label_kernel', type=str, default='linear', help='linear, erf, arccos (=relu1), relu2, relu3 (NNGP of L-layer ReLU MLP), rbf')
     parser.add_argument('--h_pool', type=str, default='train', help='train, all, train_unlabeled')
     parser.add_argument('--beta', type=float, default=1e-2)

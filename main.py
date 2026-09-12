@@ -189,7 +189,8 @@ else:
                 basis = pf[pick.to(pf.device)]
                 print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
             Y, ctx = solve_labels_kernel(H_fit, basis, T_fit, args.gamma, args.ce_steps,
-                                         args.label_kernel, pf, assign, len(hl), sel)
+                                         args.label_kernel, pf, assign, len(hl), sel,
+                                         args.kernel_prior)
             ctx['basis'] = basis
         elif args.label_mode.startswith('logistic'):
             basis, n_cl = hl, 0
