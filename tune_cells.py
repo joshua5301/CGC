@@ -17,9 +17,10 @@ EXTRA = {'cora': '--weight_decay 5e-4', 'citeseer': '--weight_decay 5e-4',
          'arxiv': '', 'flickr': '', 'reddit': ''}
 BASIS = {'cora': [0], 'citeseer': [0], 'arxiv': [1000], 'flickr': [1000], 'reddit': [1000]}
 BETAS, GAMMAS = [1e-3, 2.8e-3, 1e-2, 3e-2], [1e-5, 1e-4, 1e-3]
-SMALL = {'cora', 'citeseer'}          # small graphs: probe_mean (linear teacher) too, larger gamma
-GAMMAS_SMALL = [1e-3, 1e-2, 1e-1]
-MODES = lambda ds: ['probe_mean', 'logistic_mean'] if ds in SMALL else ['logistic_mean']
+SMALL = {'cora', 'citeseer'}          # small graphs: same erf teacher, wider (beta, gamma) sweep
+BETAS_SMALL = [1e-3, 3e-3, 1e-2, 3e-2, 1e-1]
+GAMMAS_SMALL = [1e-4, 1e-3, 1e-2, 1e-1]
+MODES = lambda ds: ['logistic_mean']
 PAT = re.compile(r'== gcn: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
 def run(ds, r, beta, gamma, repeat, tag='', basis=1000, mode='logistic_mean'):
@@ -52,8 +53,8 @@ def done(ds, r, beta, gamma, tag, basis, mode='logistic_mean'):
 
 def grid(ds, repeat=3):
     for r in RATIOS[ds]:
-        gam = GAMMAS_SMALL if ds in SMALL else GAMMAS
-        for mode, basis, beta, gamma in itertools.product(MODES(ds), BASIS[ds], BETAS, gam):
+        bet, gam = (BETAS_SMALL, GAMMAS_SMALL) if ds in SMALL else (BETAS, GAMMAS)
+        for mode, basis, beta, gamma in itertools.product(MODES(ds), BASIS[ds], bet, gam):
             if mode == 'probe_mean' and beta != BETAS[0]: continue   # probe_mean ignores beta
             if not done(ds, r, beta, gamma, 'grid', basis, mode):
                 run(ds, r, beta, gamma, repeat, 'grid', basis, mode)
