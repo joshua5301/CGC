@@ -728,7 +728,7 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
-def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value'):
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value', bw_mult=1.0):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
                    the mean dropped) and penalty gamma * ||V||^2 = gamma * ||f(B)||^2. This is the
@@ -741,6 +741,8 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value'):
     if kind == 'rbf':
         D2 = ((B * B).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (B @ B.T))
         bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
+    if bw is not None:
+        bw = bw * bw_mult          # <1: sharper / more nonlinear, >1: closer to linear
     K_BB = _kernel(B, B, kind, d, bw)
     K_BB = (K_BB + K_BB.T) / 2
     if prior == 'rkhs':
@@ -758,8 +760,9 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value'):
     return pred, W, loss, gnorm
 
 
-def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='value'):
-    pred, A, loss, gnorm = kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior)
+def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='value',
+                        bw_mult=1.0):
+    pred, A, loss, gnorm = kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
     P = F.softmax(pred(pool).double(), dim=1)
     Y = _pool_means(P, assign.to(P.device), n_cl, sel)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),
