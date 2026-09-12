@@ -728,7 +728,7 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
-def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value', bw_mult=1.0):
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
                    the mean dropped) and penalty gamma * ||V||^2 = gamma * ||f(B)||^2. This is the
@@ -760,7 +760,7 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='value', bw_
     return pred, W, loss, gnorm
 
 
-def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='value',
+def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
                         bw_mult=1.0):
     pred, A, loss, gnorm = kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
     P = F.softmax(pred(pool).double(), dim=1)

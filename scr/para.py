@@ -145,8 +145,9 @@ def para():
     parser.add_argument('--whiten', type=float, default=0.0, help='0=none, 1=full; clustering metric only')
     parser.add_argument('--kernel_bw', type=float, default=1.0,
                         help='kernel_mean: multiplier on the erf/rbf bandwidth (<1 more nonlinear)')
-    parser.add_argument('--kernel_prior', type=str, default='value',
-                        help="kernel_mean penalty: 'value' (||f(B)||^2, = logistic_mean's prior, beta-free) or 'rkhs'")
+    parser.add_argument('--kernel_prior', type=str, default='rkhs',
+                        help="kernel_mean penalty: 'rkhs' (RKHS norm, default; safe when labels << basis) "
+                             "or 'value' (||f(B)||^2, = logistic_mean's prior; collapses on small graphs)")
     parser.add_argument('--label_kernel', type=str, default='linear', help='linear, erf, arccos (=relu1), relu2, relu3 (NNGP of L-layer ReLU MLP), rbf')
     parser.add_argument('--h_pool', type=str, default='train', help='train, all, train_unlabeled')
     parser.add_argument('--beta', type=float, default=1e-2)
