@@ -24,7 +24,7 @@ begin = time.time()
 args, label_cond = generate_labels_syn(args, data)
 H = conv_graph_multi(args, data)
 
-SOFT_MODES = ('closed', 'logistic', 'logistic_mean', 'probe', 'probe_mean', 'ridge',
+SOFT_MODES = ('closed', 'logistic', 'logistic_mean', 'kernel_mean', 'probe', 'probe_mean', 'ridge',
               'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'mlp_mean', 'cs', 'cs_loss')
 if (args.label_mode in SOFT_MODES and args.head == 'mse'
         and 'head' not in getattr(args, 'explicit', set())):
@@ -180,6 +180,16 @@ else:
                 [H_pool] + list(pool_d), args.w_target)
             h, h_d = wm[0], wm[1:]
             hl, ctx['W'] = label_feats(args.label_feat, h_d), W0
+        elif args.label_mode == 'kernel_mean':
+            basis = hl
+            if args.expert_basis > 0:
+                gz = torch.Generator(); gz.manual_seed(args.seed)
+                pick = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
+                basis = pf[pick.to(pf.device)]
+                print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
+            Y, ctx = solve_labels_kernel(H_fit, basis, T_fit, args.gamma, args.ce_steps,
+                                         args.label_kernel, pf, assign, len(hl), sel)
+            ctx['basis'] = basis
         elif args.label_mode.startswith('logistic'):
             basis, n_cl = hl, 0
             if args.expert_basis > 0:
@@ -205,8 +215,9 @@ else:
                                             args.target_maxp, args.maxp_iters, pf, assign,
                                             sel)
         label_cond = Y.float()
-        if 'W' in ctx or 'dual' in ctx:
+        if 'W' in ctx or 'dual' in ctx or 'kfun' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx
+                    else ctx['kfun'](H_all).double() if 'kfun' in ctx
                     else dual_logits(H_all, ctx.get('basis', hl), ctx['dual'])).argmax(1)
             ea = lambda msk: (100 * (pred[msk] == data.y[msk]).double().mean()).item()
             print(f'expert: train {ea(data.train_mask):.2f}%  '
@@ -214,6 +225,7 @@ else:
                   + (f'test {ea(data.test_mask):.2f}%' if hasattr(data, 'test_mask') else ''))
             if pf is not None and assign is not None:
                 Pd = F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
+                               else ctx['kfun'](pf).double() if 'kfun' in ctx
                                else dual_predictor(ctx.get('basis', hl), ctx['dual'])(pf).double(), dim=1)
                 cell_diag(Pd, assign, len(h))
         if args.feat_sub:
@@ -311,10 +323,11 @@ else:
     xs, ys, n0 = h, label_cond.to(h.device), len(h)
     ei = torch.eye(n0).nonzero().t()
     if args.gen_static > 0:
-        if assign is None or not ('W' in ctx or 'dual' in ctx):
+        if assign is None or not ('W' in ctx or 'dual' in ctx or 'kfun' in ctx):
             raise SystemExit('--gen_static needs a *_mean label mode with an explicit teacher')
         sd0 = cell_std(H_pool, assign, n0).to(h.device)
         tch = ((lambda x: x @ ctx['W'].float().to(h.device)) if 'W' in ctx
+               else ctx['kfun'] if 'kfun' in ctx
                else dual_predictor(ctx.get('basis', hl).to(h.device), ctx['dual']))
         gs = torch.Generator(device='cpu'); gs.manual_seed(args.seed)
         eps = torch.randn(args.gen_static, n0, h.shape[1], generator=gs).to(h.device)
@@ -345,12 +358,14 @@ else:
     if tan is not None and args.tangent > 0 and not args.tan_static:
         graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
     if args.gen > 0:
-        if assign is None or not ('W' in ctx or 'dual' in ctx):
+        if assign is None or not ('W' in ctx or 'dual' in ctx or 'kfun' in ctx):
             raise SystemExit('--gen needs a *_mean label mode with an explicit teacher (probe/logistic)')
         graph.sd = cell_std(H_pool, assign, len(h)).to(h.device)
         if 'W' in ctx:
             Wt = ctx['W'].float().to(h.device)
             graph.teacher = lambda x: x @ Wt
+        elif 'kfun' in ctx:
+            graph.teacher = ctx['kfun']
         else:
             graph.teacher = dual_predictor(ctx.get('basis', hl).to(h.device), ctx['dual'])
         print(f'gen: per-cell std mean {graph.sd.mean():.4f}  bytes/node '

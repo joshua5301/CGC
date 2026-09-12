@@ -39,7 +39,7 @@ def para():
                              'metis, vng (structural coarsening cells)')
     parser.add_argument('--cand_mult', type=float, default=4.0,
                         help='candidate over-generation factor for --landmark easy/hard')
-    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), mlp_mean (MLP-on-H teacher), cs, cs_loss')
+    parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, kernel_mean (honest-dual kernel logistic teacher, gamma only), probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), mlp_mean (MLP-on-H teacher), cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '

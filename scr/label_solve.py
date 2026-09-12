@@ -720,6 +720,48 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf'):
+    """Kernel logistic regression in the honest dual: logits K(h,B) A, penalty gamma * tr(A^T K_BB A).
+    One hyperparameter (gamma), no inverse, no ridge. Returns (predictor, A, loss, gnorm)."""
+    H_L, B, Y_L = H_L.double(), B.double(), Y_L.double()
+    d = B.shape[1]
+    bw = ((B * B).sum(1).mean() / d).clamp(min=1e-12) if kind == 'erf' else None
+    if kind == 'rbf':
+        D2 = ((B * B).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (B @ B.T))
+        bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
+    K_LB = _kernel(H_L, B, kind, d, bw)
+    K_BB = _kernel(B, B, kind, d, bw)
+    K_BB = (K_BB + K_BB.T) / 2
+    g = gamma * K_BB.diagonal().mean()          # gamma relative to mean feature energy, as in fit_probe_W
+    A = torch.zeros(B.shape[0], Y_L.shape[1], dtype=B.dtype, device=B.device).requires_grad_(True)
+    opt = torch.optim.LBFGS([A], max_iter=steps, history_size=20, tolerance_grad=1e-10,
+                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+
+    def closure():
+        opt.zero_grad()
+        loss = F.cross_entropy(K_LB @ A, Y_L) + 0.5 * g * (A * (K_BB @ A)).sum()
+        loss.backward()
+        return loss
+
+    opt.step(closure)
+    with torch.enable_grad():
+        loss = closure()
+    gnorm = A.grad.norm().item()
+    A = A.detach()
+    Bf, Af, bwf = B.float(), A.float(), (None if bw is None else float(bw))
+    pred = lambda x: _kernel(x.float().to(Bf.device), Bf, kind, d, bwf) @ Af
+    return pred, A, loss.item(), gnorm
+
+
+def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None):
+    pred, A, loss, gnorm = kernel_teacher(H_L, B, Y_L, gamma, steps, kind)
+    P = F.softmax(pred(pool).double(), dim=1)
+    Y = _pool_means(P, assign.to(P.device), n_cl, sel)
+    ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),
+           'kfun': pred, 'A': A}
+    return Y, ctx
+
+
 def fit_probe_W_ridge(H_L, Y_L, gamma):
     H_L, Y_L = H_L.double(), Y_L.double()
     m, d = H_L.shape

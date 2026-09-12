@@ -5,15 +5,16 @@ import pandas as pd
 from google.colab import drive
 drive.mount('/content/drive')
 LOGDIR = '/content/drive/MyDrive/cgc_tune'; os.makedirs(LOGDIR, exist_ok=True)
-LOG = f'{LOGDIR}/probe_{SESSION}.jsonl'
+LOG = f'{LOGDIR}/kernel_{SESSION}.jsonl'
 
 BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kmeans "
-        "--landmark kmeans --h_pool all --ce_steps 1000 --head ce --label_mode probe_mean")
+        "--landmark kmeans --h_pool all --ce_steps 1000 --head ce "
+        "--label_mode kernel_mean --label_kernel erf")
 RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}
-EXTRA = {'cora': '--weight_decay 5e-4', 'citeseer': '--weight_decay 5e-4',
-         'arxiv': '', 'flickr': '', 'reddit': ''}
+EXTRA = {'cora': '--weight_decay 5e-4 --expert_basis 0', 'citeseer': '--weight_decay 5e-4 --expert_basis 0',
+         'arxiv': '--expert_basis 1000', 'flickr': '--expert_basis 1000', 'reddit': '--expert_basis 1000'}
 GAMMAS = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1]           # the single hyperparameter
 PAT = re.compile(r'== gcn: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
@@ -34,7 +35,7 @@ def run(ds, r, gamma, repeat, tag=''):
     return rec
 
 def load():
-    recs = [json.loads(l) for f in glob.glob(f'{LOGDIR}/probe_*.jsonl') for l in open(f)]
+    recs = [json.loads(l) for f in glob.glob(f'{LOGDIR}/kernel_*.jsonl') for l in open(f)]
     return pd.DataFrame(recs)
 
 def done(ds, r, gamma, tag):
