@@ -1,97 +1,105 @@
 # ============ Cell 1: common (identical in all three sessions except SESSION) =============
-SESSION = 'A'          # 'A' / 'B' / 'C'
+SESSION = 'C'          # 'A' / 'B' / 'C'
 import subprocess, re, json, os, time, glob, itertools
 import pandas as pd
 from google.colab import drive
 drive.mount('/content/drive')
 LOGDIR = '/content/drive/MyDrive/cgc_tune'; os.makedirs(LOGDIR, exist_ok=True)
-TAG = 'full'
+TAG = 'stage'
 LOG = f'{LOGDIR}/{TAG}_{SESSION}.jsonl'
+pd.set_option('display.width', 220)
 
+# condensation: kernel teacher (rkhs prior), basis fixed at min(N, 3000), gamma swept
+# downstream : 2-layer GCN-256, Adam lr 0.01, 1000 epochs, best-val epoch; dropout / wd swept via --down_grid
 BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kmeans "
         "--landmark kmeans --h_pool all --ce_steps 1000 --head ce "
-        "--label_mode kernel_mean --kernel_prior rkhs "
-        "--no_hyperpara 1 --lr 0.01 --dropout 0.5 --weight_decay 5e-4 --epoch 600")
-# downstream recipe = GCond / ClustGDD fixed recipe: 2-layer GCN-256, Adam lr 0.01, dropout 0.5,
-# wd 5e-4 (arxiv: wd 0), 600 epochs, best-val epoch. Same for every dataset and density.
-WD = {'arxiv': 0.0}                    # GCond uses weight_decay 0 on ogbn-arxiv
+        "--label_mode kernel_mean --kernel_prior rkhs --expert_basis 3000 "
+        "--no_hyperpara 1 --lr 0.01 --epoch 1000 --dropout 0.5 --weight_decay 5e-4")
 RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}
+MINE = {'A': ['arxiv'], 'B': ['reddit'], 'C': ['cora', 'citeseer', 'flickr']}[SESSION]
 KERNELS = ['erf', 'relu1', 'relu2']
-BASES   = [0, 1000, 3000]            # 0 = landmarks
-GAMMAS  = [1e-4, 1e-3, 1e-2]
-REPEAT  = 2
-PAT = re.compile(r'== gcn: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
-
-def run(ds, r, kernel, basis, gamma, repeat, tag=''):
-    cmd = (f"python main.py {BASE} --weight_decay {WD.get(ds, 5e-4)} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
-           f"--expert_basis {basis} --gamma {gamma} --repeat {repeat}")
-    t = time.time()
-    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC').stdout
-    m = PAT.search(out)
-    if not m:
-        print('FAIL', ds, r, kernel, basis, gamma, '\n', out[-1200:]); return None
-    rec = dict(ds=ds, ratio=r, kernel=kernel, basis=basis, gamma=gamma, repeat=repeat, tag=tag,
-               test=float(m[1]), std=float(m[2]), val=float(m[3]), sec=round(time.time() - t))
-    ex = re.search(r'expert:.*', out); rec['expert'] = ex[0] if ex else ''
-    with open(LOG, 'a') as f: f.write(json.dumps(rec) + '\n')
-    print(f"{ds:8s} r={r:<7g} {kernel:5s} b={basis:<5} g={gamma:<6g}  val {rec['val']:.2f}  "
-          f"test {rec['test']:.2f}±{rec['std']:.2f}  ({rec['sec']}s)  {rec['expert'][:60]}")
-    return rec
+GAMMAS  = [1e-5, 1e-4, 1e-3, 1e-2, 3e-2, 1e-1]
+DOWN1   = '0,0.5;0,5e-4'                          # stage 1: interaction check
+DOWN2   = '0,0.3,0.5,0.7;0,1e-4,5e-4,2e-3'        # stage 2: downstream recipe
+PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+): ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
 def load():
     recs = [json.loads(l) for f in glob.glob(f'{LOGDIR}/{TAG}_*.jsonl') for l in open(f)]
     return pd.DataFrame(recs)
 
-def done(ds, r, kernel, basis, gamma, tag):
+def done(ds, r, kernel, gamma, tag):
     df = load()
-    return len(df) > 0 and ((df.ds == ds) & (df.ratio == r) & (df.kernel == kernel) & (df.basis == basis)
+    return len(df) > 0 and ((df.ds == ds) & (df.ratio == r) & (df.kernel == kernel)
                             & (df.gamma == gamma) & (df.tag == tag)).any()
 
-def grid(ds, repeat=REPEAT):
+def run(ds, r, kernel, gamma, down, repeat, tag):
+    cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
+           f"--gamma {gamma} --repeat {repeat} --down_grid '{down}'")
+    t = time.time()
+    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC').stdout
+    rows = PAT_D.findall(out)
+    if not rows:
+        print('FAIL', ds, r, kernel, gamma, '\n', out[-1200:]); return
+    ex = re.search(r'expert:.*', out); ex = ex[0] if ex else ''
+    with open(LOG, 'a') as f:
+        for do_, wd_, te, sd, va in rows:
+            f.write(json.dumps(dict(ds=ds, ratio=r, kernel=kernel, gamma=gamma, drop=float(do_), wd=float(wd_),
+                                    repeat=repeat, tag=tag, test=float(te), std=float(sd), val=float(va),
+                                    expert=ex)) + '\n')
+    best = max(rows, key=lambda x: float(x[4]))
+    print(f"{ds:8s} r={r:<7g} {kernel:5s} g={gamma:<6g} [{tag}]  best val {best[4]} "
+          f"(do={best[0]} wd={best[1]}) test {best[2]}±{best[3]}  ({round(time.time() - t)}s)  {ex[:50]}")
+
+def grid(ds, repeat=2):
     for r in RATIOS[ds]:
-        for kernel, basis, gamma in itertools.product(KERNELS, BASES, GAMMAS):
-            if not done(ds, r, kernel, basis, gamma, 'grid'):
-                run(ds, r, kernel, basis, gamma, repeat, 'grid')
+        for kernel, gamma in itertools.product(KERNELS, GAMMAS):
+            if not done(ds, r, kernel, gamma, 'stage1'):
+                run(ds, r, kernel, gamma, DOWN1, repeat, 'stage1')
 
-# ============ Cell 2: grid — keep only your session's line (27 runs per density) =============
-# session A  (~1.5 h)
-grid('arxiv')
-# session B  (~1.5 h)
-# grid('reddit')
-# session C  (~1.2 h)
-# grid('flickr'); grid('cora'); grid('citeseer')
+def best_cond(ds):
+    g = load()
+    if not len(g): return g
+    g = g[(g.ds == ds) & (g.tag == 'stage1')]
+    return g.sort_values('val', ascending=False).groupby('ratio').head(1)
 
-# ============ Cell 3: best by val -> repeat 10 (after all grids finish) =============
-def best_by_val(ds):
-    df = load()
-    if not len(df): return df
-    df = df[(df.ds == ds) & (df.tag == 'grid')]
-    return df.sort_values('val', ascending=False).groupby('ratio').head(1)
-
-MINE = {'A': ['arxiv'], 'B': ['reddit'], 'C': ['flickr', 'cora', 'citeseer']}[SESSION]
+# ============ Cell 2: stage 1 — condensation axes under 4 downstream recipes =============
+# 18 condensations per density; small graphs ~45 s each, arxiv/reddit ~3 min each
 for ds in MINE:
-    for _, row in best_by_val(ds).iterrows():
-        if not done(ds, row.ratio, row.kernel, int(row.basis), row.gamma, 'final'):
-            run(ds, row.ratio, row.kernel, int(row.basis), row.gamma, 10, 'final')
+    grid(ds)
+
+# ============ Cell 3: stage 2 — 16 downstream recipes on the val-best condensation per density =============
+for ds in MINE:
+    for _, row in best_cond(ds).iterrows():
+        if not done(ds, row.ratio, row.kernel, row.gamma, 'stage2'):
+            run(ds, row.ratio, row.kernel, row.gamma, DOWN2, 3, 'stage2')
 
 # ============ Cell 4: tables (any session) =============
 df = load(); assert len(df), 'no logs found in Drive'
-g = df[df.tag == 'grid']
-pd.set_option('display.width', 200)
+s1 = df[df.tag == 'stage1']
 for ds in RATIOS:
-    sub = g[g.ds == ds]
+    sub = s1[s1.ds == ds]
     if not len(sub): continue
-    print(f'\n##### {ds}: best by val per density')
-    print(best_by_val(ds)[['ratio', 'kernel', 'basis', 'gamma', 'val', 'test', 'std']].to_string(index=False))
-    for ax in ['kernel', 'basis', 'gamma']:
-        print(f'--- {ds}: best val over the other axes, by ratio x {ax}')
-        print(sub.groupby(['ratio', ax]).val.max().unstack().round(2).to_string())
-fin = df[df.tag == 'final'].copy()
-if len(fin):
+    for ax in ['kernel', 'gamma']:
+        print(f'\n--- {ds}: stage 1 best val, rows (ratio, drop, wd) x {ax}')
+        print(sub.groupby(['ratio', 'drop', 'wd', ax]).val.max().unstack().round(2).to_string())
+s2 = df[df.tag == 'stage2']
+for ds in RATIOS:
+    sub = s2[s2.ds == ds]
+    if not len(sub): continue
+    print(f'\n##### {ds}: stage 2 val, rows (ratio, drop) x wd')
+    print(sub.pivot_table(index=['ratio', 'drop'], columns='wd', values='val').round(2).to_string())
+    print(f'##### {ds}: stage 2 test, rows (ratio, drop) x wd')
+    print(sub.pivot_table(index=['ratio', 'drop'], columns='wd', values='test').round(2).to_string())
+if len(s2):
+    fin = s2.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1).copy()
     fin['cell'] = fin.apply(lambda x: f"{x['test']:.1f}±{x['std']:.1f}", axis=1)
-    fin['cfg'] = fin.apply(lambda x: f"{x['kernel']} b={x['basis']:g} γ={x['gamma']:g}", axis=1)
-    print('\n##### FINAL (repeat 10)')
+    fin['cfg'] = fin.apply(lambda x: f"{x['kernel']} γ={x['gamma']:g} do={x['drop']:g} wd={x['wd']:g}", axis=1)
+    print('\n##### MAIN TABLE (val-selected, repeat 3)')
     print(fin.pivot(index='ds', columns='ratio', values='cell').to_string())
     print(fin.pivot(index='ds', columns='ratio', values='cfg').to_string())
+    gc = s2[(s2['drop'] == 0.5) & (s2.wd == 5e-4)].copy()
+    gc['cell'] = gc.apply(lambda x: f"{x['test']:.1f}±{x['std']:.1f}", axis=1)
+    print('\n##### GCond fixed recipe (dropout 0.5, wd 5e-4) on the same condensed graphs')
+    print(gc.pivot(index='ds', columns='ratio', values='cell').to_string())
