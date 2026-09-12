@@ -433,5 +433,8 @@ for arch in ARCHS:
             print(f'== round {rnd} {arch}: {100*np.mean(acc):.2f} +- '
                   f'{100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
     args.test_gnn = arch
-    print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
+    vals = getattr(args, 'val_log', [])[-len(acc):]
+    print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}'
+          + (f'  (val {100*np.mean(vals):.2f})' if vals else '')
+          + f'  [{args.dataset_name} r={args.ratio:g} beta={args.beta:g} gamma={args.gamma:g}]')
     result_record(args, acc)

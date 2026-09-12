@@ -423,6 +423,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
         if epoch%100 == 0 :
             print(f'Epoch: {epoch:03d}, Loss: {loss.item():.4f}, Train: {train_acc:.4f}, Val: {best_val_acc:.4f}, Test: {test_acc:.4f}')
     print()
+    args.val_log = getattr(args, 'val_log', []) + [best_val_acc]
     return test_acc
 
 
