@@ -14,11 +14,19 @@ def _kernel(A, B, kind, d, bw=None):
         b = (B * B).sum(1).unsqueeze(0) / (d * bw)
         r = 2 * S / torch.sqrt((1 + 2 * a) * (1 + 2 * b))
         return (2 / math.pi) * torch.asin(r.clamp(-1 + 1e-12, 1 - 1e-12))
-    if kind == 'arccos':
+    if kind.startswith('arccos') or kind.startswith('relu'):
+        # NNGP kernel of an L-hidden-layer ReLU MLP (Cho & Saul order-1 arc-cosine, composed L times).
+        # 'arccos' / 'relu1' = 1 layer, 'relu2', 'relu3', ... = deeper. Only angles matter after layer 1.
+        L = 1 if kind == 'arccos' else int(kind[4:] or 1)
         na = A.norm(dim=1, keepdim=True).clamp(min=1e-12)
         nb = B.norm(dim=1).unsqueeze(0).clamp(min=1e-12)
-        th = torch.acos(((A @ B.T) / (na * nb)).clamp(-1 + 1e-12, 1 - 1e-12))
-        return (na * nb) / (math.pi * d) * (torch.sin(th) + (math.pi - th) * torch.cos(th))
+        cos = ((A @ B.T) / (na * nb)).clamp(-1 + 1e-12, 1 - 1e-12)
+        scale = (na * nb) / d
+        for _ in range(L):
+            th = torch.acos(cos)
+            cos = (torch.sin(th) + (math.pi - th) * torch.cos(th)) / math.pi   # normalised: diag -> 1
+            cos = cos.clamp(-1 + 1e-12, 1 - 1e-12)
+        return scale * cos
     if kind == 'rbf':
         D2 = ((A * A).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (A @ B.T))
         return torch.exp(-D2.clamp(min=0) / (2 * bw))
