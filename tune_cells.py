@@ -10,7 +10,11 @@ LOG = f'{LOGDIR}/{TAG}_{SESSION}.jsonl'
 
 BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kmeans "
         "--landmark kmeans --h_pool all --ce_steps 1000 --head ce "
-        "--label_mode kernel_mean --kernel_prior rkhs")      # downstream recipe: CGC table as-is
+        "--label_mode kernel_mean --kernel_prior rkhs "
+        "--no_hyperpara 1 --lr 0.01 --dropout 0.5 --weight_decay 5e-4 --epoch 600")
+# downstream recipe = GCond / ClustGDD fixed recipe: 2-layer GCN-256, Adam lr 0.01, dropout 0.5,
+# wd 5e-4 (arxiv: wd 0), 600 epochs, best-val epoch. Same for every dataset and density.
+WD = {'arxiv': 0.0}                    # GCond uses weight_decay 0 on ogbn-arxiv
 RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}
@@ -21,7 +25,7 @@ REPEAT  = 2
 PAT = re.compile(r'== gcn: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
 def run(ds, r, kernel, basis, gamma, repeat, tag=''):
-    cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
+    cmd = (f"python main.py {BASE} --weight_decay {WD.get(ds, 5e-4)} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
            f"--expert_basis {basis} --gamma {gamma} --repeat {repeat}")
     t = time.time()
     out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC').stdout
