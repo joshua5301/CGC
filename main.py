@@ -451,6 +451,20 @@ for arch in ARCHS:
         if args.self_rounds:
             print(f'== round {rnd} {arch}: {100*np.mean(acc):.2f} +- '
                   f'{100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
+    if args.down_grid:
+        # downstream recipe sweep on the same condensed graph: '0,0.3,0.5;0,1e-4,5e-4' = dropouts;wds
+        dos, wds = [[float(v) for v in part.split(',') if v.strip()] for part in args.down_grid.split(';')]
+        for do_ in dos:
+            for wd_ in wds:
+                args.dropout, args.weight_decay = do_, wd_
+                a2 = []
+                for repeat in range(args.repeat):
+                    m2 = GNN(arch, data.num_features, args.n_dim, args.num_class, args.gnn_layers, do_,
+                             logits=(args.head == 'mse_logit')).to(args.device)
+                    a2.append(model_training(m2, args, data, graph, data_val, data_test))
+                v2 = getattr(args, 'val_log', [])[-len(a2):]
+                print(f'== down do={do_:g} wd={wd_:g}: {100*np.mean(a2):.2f} +- '
+                      f'{100*np.std(a2, ddof=1) if len(a2) > 1 else 0.0:.2f}  (val {100*np.mean(v2):.2f})')
     args.test_gnn = arch
     vals = getattr(args, 'val_log', [])[-len(acc):]
     print(f'== {arch}: {100*np.mean(acc):.2f} +- {100*np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}'

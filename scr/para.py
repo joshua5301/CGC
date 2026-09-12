@@ -20,6 +20,8 @@ def para():
 
     parser.add_argument('--kernel', type=str, default="gcn", help='gcn, ppr, heat, cheby, sage')
     parser.add_argument('--conv_depth', type=int, default=2, help= 'number of conv depth of the original graph')
+    parser.add_argument('--down_grid', type=str, default='',
+                        help="after condensing once, also train the test GNN over 'do1,do2;wd1,wd2' and print '== down' lines")
     parser.add_argument('--gnn_layers', type=int, default=2,
                         help='downstream GNN depth (default 2; compare with --conv_depth)')
     parser.add_argument('--repeat', type=int, default=3)
