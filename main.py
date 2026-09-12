@@ -118,7 +118,8 @@ else:
         print(f'dim: {hl.shape[1]}  maxp: {Y.max(1)[0].mean():.4f}  '
               f'rowsum: {Y.sum(1).mean():.3f}')
     elif args.label_mode in ('logistic', 'logistic_mean', 'probe', 'probe_mean',
-                             'ridge', 'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'mlp_mean'):
+                             'ridge', 'ridge_mean', 'restricted', 'weighted', 'gcn_mean', 'mlp_mean',
+                             'kernel_mean'):
         prior, sel = None, None
         if args.label_prior == 'cluster':
             prior = cluster_prior(assign, tr_pool, y_pool, len(hl), args.num_class,
@@ -276,6 +277,8 @@ else:
               f'rowsum: {Y.sum(1).mean():.3f}  min: {Y.min():.3f}'
               + (f'  gamma*: {ctx["gamma_rel"]:.3g}' if 'gamma_rel' in ctx else ''))
     else:
+        if args.label_mode != 'onehot':
+            raise SystemExit(f'unknown --label_mode {args.label_mode}')
         label_cond = onehot_labels(args, hl, H_L, y_L, assign, y_pool, tr_pool)
     n_pool = len(H_pool)
 
