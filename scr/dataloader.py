@@ -7,11 +7,13 @@ from scr.models import *
 def get_dataset(args):
 
     if args.dataset_name in ["cora"]:
-        dataset = Planetoid(args.raw_data_dir, 'cora')
+        dataset = Planetoid(args.raw_data_dir, 'cora',
+                            transform=T.NormalizeFeatures() if args.feat_norm else None)
         data = dataset[0]
 
     elif args.dataset_name in ['citeseer']:
-        dataset = Planetoid(args.raw_data_dir, 'citeseer')
+        dataset = Planetoid(args.raw_data_dir, 'citeseer',
+                            transform=T.NormalizeFeatures() if args.feat_norm else None)
         data = dataset[0]
 
     elif args.dataset_name == "arxiv":
@@ -118,10 +120,10 @@ def get_dataset(args):
 
         # feat
         feat = np.load(dataset_str+'feats.npy')
-        # feat_train = feat[idx_train]
-        # scaler = StandardScaler()
-        # scaler.fit(feat_train)
-        # feat = scaler.transform(feat)
+        if args.feat_norm:        # GraphSAINT / GCond / GEOM: standardise with train statistics
+            scaler = StandardScaler()
+            scaler.fit(feat[idx_train])
+            feat = scaler.transform(feat)
 
         dataset = Data(x=torch.FloatTensor(feat).float(), 
                         edge_index=torch.LongTensor(np.array(adj_full.nonzero())), 

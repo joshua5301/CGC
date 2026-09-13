@@ -376,7 +376,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val_acc = test_acc = 0
     for epoch in range(1, args.epoch+1):
-        if epoch == args.epoch // 2:
+        if epoch == args.epoch // 2 and getattr(args, 'lr_decay', 1):
             lr = args.lr*0.1
             optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=args.weight_decay)
 

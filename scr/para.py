@@ -8,6 +8,9 @@ def para():
     parser.add_argument('--ratio', type=float, default= 0.001)
     # cora 0.026 citeseer 0.018  arxiv 0.0025 flickr 0.005  reddit 0.001
     parser.add_argument('--raw_data_dir', type=str, default="./data/")
+    parser.add_argument('--lr_decay', type=int, default=1, help='1 = lr x0.1 at half of the epochs (CGC); 0 = constant lr (GEOM/GCond)')
+    parser.add_argument('--feat_norm', type=int, default=0,
+                        help='1 = baseline preprocessing: row-normalise cora/citeseer (T.NormalizeFeatures), standardise flickr (train stats)')
     parser.add_argument('--result_path', type=str, default="./results")
     parser.add_argument('--cond_folder', type=str, default="./cond_graph/")
     parser.add_argument('--epoch', type=int, default=1000)
