@@ -326,6 +326,27 @@ if args.generate_adj == 1:
 else:
     xs, ys, n0 = h, label_cond.to(h.device), len(h)
     ei = torch.eye(n0).nonzero().t()
+    if args.label_mc > 0:
+        # label = teacher averaged over M Gaussian draws inside each cell (densified cell), nodes unchanged
+        if assign is None or not ('W' in ctx or 'dual' in ctx or 'kfun' in ctx):
+            raise SystemExit('--label_mc needs a *_mean label mode with an explicit teacher')
+        sdm = cell_std(H_pool, assign, n0).to(h.device) * args.label_mc_scale
+        tchm = ((lambda x: x @ ctx['W'].float().to(h.device)) if 'W' in ctx
+                else ctx['kfun'] if 'kfun' in ctx
+                else dual_predictor(ctx.get('basis', hl).to(h.device), ctx['dual']))
+        gm = torch.Generator(device='cpu'); gm.manual_seed(args.seed)
+        acc_p = torch.zeros_like(ys)
+        with torch.no_grad():
+            for _ in range(args.label_mc):
+                e = torch.randn(n0, h.shape[1], generator=gm).to(h.device)
+                acc_p += F.softmax(tchm(h + sdm * e), dim=1)
+        y_mc = acc_p / args.label_mc
+        w = args.label_mc_mix
+        print(f'label_mc: {args.label_mc} draws  scale {args.label_mc_scale:g}  mix {w:g}  '
+              f'maxp emp {ys.max(1)[0].mean():.4f} -> mc {y_mc.max(1)[0].mean():.4f}  '
+              f'|emp - mc| {(ys - y_mc).abs().sum(1).mean():.4f}')
+        ys = (1 - w) * ys + w * y_mc
+        label_cond = ys.to(args.device)
     if args.gen_static > 0:
         if assign is None or not ('W' in ctx or 'dual' in ctx or 'kfun' in ctx):
             raise SystemExit('--gen_static needs a *_mean label mode with an explicit teacher')
