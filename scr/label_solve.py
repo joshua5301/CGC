@@ -225,10 +225,9 @@ def trim_assign(H, k, method, frac, rounds=3):
         C = torch.zeros(k, H.shape[1], dtype=H.dtype, device=H.device).index_add_(0, assign[keep], H[keep])
         cnt = torch.bincount(assign[keep], minlength=k).clamp_min(1).unsqueeze(1).to(H.dtype)
         C = C / cnt
-        d = (H - C[assign]).norm(dim=1)
-        d[~keep] = float('inf')                       # already-dropped points stay dropped
-        thr = d[keep].topk(m).values.min() if m > 0 else float('inf')
-        keep = d < thr
+        d = torch.cdist(H, C).min(1).values             # every point re-scored against current centroids
+        thr = d.topk(m).values.min() if m > 0 else float('inf')
+        keep = d < thr                                # exactly m farthest points dropped this round
         assign_in = _assign(H[keep], k, method).to(H.device)
         assign = torch.full((N,), -1, dtype=torch.long, device=H.device); assign[keep] = assign_in
     C = torch.zeros(k, H.shape[1], dtype=H.dtype, device=H.device).index_add_(0, assign[keep], H[keep])
