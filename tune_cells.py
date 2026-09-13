@@ -38,7 +38,8 @@ def run(ds, r, kernel, gamma, down, repeat, tag):
     cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
            f"--gamma {gamma} --repeat {repeat} --down_grid '{down}'")
     t = time.time()
-    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC').stdout
+    p = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC')
+    out = p.stdout + p.stderr
     rows = PAT_D.findall(out)
     if not rows:
         print('FAIL', ds, r, kernel, gamma, '\n', out[-1200:]); return
