@@ -407,7 +407,13 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
         else:
             output = model(graph)
             out, y = output[graph.train_mask], graph.y[graph.train_mask]
-            loss = F.nll_loss(out, y) if y.dim() == 1 else soft_loss(out, y, args.head)
+            if y.dim() == 1:
+                loss = F.nll_loss(out, y)
+            elif hasattr(graph, 'w'):                     # cell-size weighted soft CE
+                w = graph.w[graph.train_mask]
+                loss = (w * (-(y * out).sum(1))).sum() / w.sum()
+            else:
+                loss = soft_loss(out, y, args.head)
 
         optimizer.zero_grad()
         loss.backward()

@@ -214,6 +214,29 @@ def _whiten(H, alpha, rtol=1e-7):
     return (H - H.mean(0, keepdim=True)) @ T
 
 
+def trim_assign(H, k, method, frac, rounds=3):
+    """k-means-- (Chawla & Gionis 2013): drop the frac*N points farthest from their centroid,
+    re-cluster the rest, repeat; finally attach the dropped points to their nearest centroid so they
+    still enter the cell means but cannot claim a cell of their own."""
+    N = len(H); m = int(frac * N)
+    keep = torch.ones(N, dtype=torch.bool, device=H.device)
+    assign = _assign(H, k, method).to(H.device)
+    for _ in range(rounds):
+        C = torch.zeros(k, H.shape[1], dtype=H.dtype, device=H.device).index_add_(0, assign[keep], H[keep])
+        cnt = torch.bincount(assign[keep], minlength=k).clamp_min(1).unsqueeze(1).to(H.dtype)
+        C = C / cnt
+        d = (H - C[assign]).norm(dim=1)
+        d[~keep] = float('inf')                       # already-dropped points stay dropped
+        thr = d[keep].topk(m).values.min() if m > 0 else float('inf')
+        keep = d < thr
+        assign_in = _assign(H[keep], k, method).to(H.device)
+        assign = torch.full((N,), -1, dtype=torch.long, device=H.device); assign[keep] = assign_in
+    C = torch.zeros(k, H.shape[1], dtype=H.dtype, device=H.device).index_add_(0, assign[keep], H[keep])
+    C = C / torch.bincount(assign[keep], minlength=k).clamp_min(1).unsqueeze(1).to(H.dtype)
+    assign[~keep] = torch.cdist(H[~keep], C).argmin(1)
+    return assign, int((~keep).sum())
+
+
 def balance_assign(H, assign, k, slack=1.0, iters=20):
     """Equal-mass repair of a partition: cells above cap = ceil(N/k * slack) release their
     farthest members to the nearest cell with spare capacity. Centroids are refreshed each sweep."""
@@ -392,7 +415,12 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None):
         print(f'landmark[{args.landmark}]: {k} structural cells (budget {n_p})')
     else:
         method = 'nocluster' if args.landmark == 'random_split' else args.clustering
-        assign, k = _assign(Hw, n_p, method), n_p
+        if getattr(args, 'trim', 0.0) > 0 and method == 'kmeans':
+            assign, n_out = trim_assign(Hw, n_p, method, args.trim)
+            k = n_p
+            print(f'trim: {n_out} outliers ({args.trim:.1%}) attached after clustering')
+        else:
+            assign, k = _assign(Hw, n_p, method), n_p
         if getattr(args, 'balanced', 0.0) > 0:
             assign, lo, hi, cap = balance_assign(Hw, assign, k, args.balanced)
             print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')

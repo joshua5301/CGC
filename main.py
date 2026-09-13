@@ -380,6 +380,10 @@ else:
               + f'  maxp {ys.max(1)[0].mean():.4f}')
     graph = Data(x=xs, y=ys, edge_index=ei.to(h.device), edge_attr=torch.ones(ei.shape[1], device=h.device),
                  train_mask=torch.ones(len(xs), dtype=torch.bool, device=h.device))
+    if args.cell_weight and assign is not None and len(xs) == n0:
+        cw = torch.bincount(assign.to(h.device), minlength=n0).float()
+        graph.w = (cw / cw.mean()) ** args.cell_weight
+        print(f'cell_weight: exponent {args.cell_weight:g}  w min/max {graph.w.min():.3f}/{graph.w.max():.3f}')
     if tan is not None and args.tangent > 0 and not args.tan_static:
         graph.u, graph.g, graph.sig = [t.to(h.device) for t in tan]
     if args.gen > 0:
