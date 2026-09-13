@@ -107,6 +107,8 @@ def para():
                         help='k-means metric space: last (A^K X), concat (all depths), '
                              'multi (all depths + high-pass (I-A)X, (I-A)^2X); condensed x stays A^K X')
     parser.add_argument('--hp_w', type=float, default=1.0, help='weight of the high-pass blocks in --cluster_feat multi')
+    parser.add_argument('--bregman', type=float, default=0.0,
+                        help='>0: refine k-means with Lloyd steps on ||h-hbar||^2/s + mu*KL(p||ybar) (Bregman k-means)')
     parser.add_argument('--lam_p', type=float, default=0.0,
                         help='weight of the teacher posterior block when clustering; '
                              '0 = feature space only (default), large = posterior space')

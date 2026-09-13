@@ -236,6 +236,37 @@ def trim_assign(H, k, method, frac, rounds=3):
     return assign, int((~keep).sum())
 
 
+def bregman_assign(H, P, assign, k, mu, iters=20, chunk=8192):
+    """Lloyd iterations for  sum_j sum_{t in C_j} ||h_t - hbar_j||^2 / s  +  mu * KL(p_t || ybar_j).
+    Both terms are Bregman divergences, so the optimal centres are the plain means (features) and
+    the plain means (labels); only the assignment rule changes. s = mean squared feature distance
+    of the initial partition, so mu is the relative weight of the label term."""
+    H = H.double(); P = P.double().clamp_min(1e-12); assign = assign.clone().to(H.device)
+    N, d = H.shape; C = P.shape[1]
+    ent = (P * P.log()).sum(1)                                   # sum_c p log p (constant per node)
+    def centres(a):
+        cnt = torch.bincount(a, minlength=k).clamp_min(1).to(H.dtype).unsqueeze(1)
+        hc = torch.zeros(k, d, dtype=H.dtype, device=H.device).index_add_(0, a, H) / cnt
+        yc = torch.zeros(k, C, dtype=H.dtype, device=H.device).index_add_(0, a, P) / cnt
+        return hc, yc.clamp_min(1e-12)
+    hc, yc = centres(assign)
+    s = ((H - hc[assign]) ** 2).sum(1).mean().clamp_min(1e-12)
+    for _ in range(iters):
+        new = torch.empty_like(assign)
+        logy = yc.log()
+        for i in range(0, N, chunk):
+            Hb, Pb = H[i:i + chunk], P[i:i + chunk]
+            df = torch.cdist(Hb, hc) ** 2 / s                    # b x k
+            dl = ent[i:i + chunk].unsqueeze(1) - Pb @ logy.T       # KL(p_t || ybar_j)
+            new[i:i + chunk] = (df + mu * dl).argmin(1)
+        moved = int((new != assign).sum())
+        assign = new
+        hc, yc = centres(assign)
+        if moved == 0:
+            break
+    return assign, moved
+
+
 def balance_assign(H, assign, k, slack=1.0, iters=20):
     """Equal-mass repair of a partition: cells above cap = ceil(N/k * slack) release their
     farthest members to the nearest cell with spare capacity. Centroids are refreshed each sweep."""
@@ -383,7 +414,7 @@ def vng_partition(edge_index, mask, n_pool, k, K=10):
 
 
 
-def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None):
+def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=None):
     n_p = int(args.budget)
     if args.landmark in ('random', 'herding', 'kcenter'):
         Hs = H_pool if Hc is None else Hc
@@ -423,6 +454,10 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None):
         if getattr(args, 'balanced', 0.0) > 0:
             assign, lo, hi, cap = balance_assign(Hw, assign, k, args.balanced)
             print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
+    if getattr(args, 'bregman', 0.0) > 0 and P is not None:
+        assign, moved = bregman_assign(Hw, P.to(Hw.device), assign.to(Hw.device), k, args.bregman)
+        assign = assign.cpu()
+        print(f'bregman: mu {args.bregman:g}  last sweep moved {moved} nodes')
     h, remap = _cluster_means(H_pool, assign, k)
     return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
 
