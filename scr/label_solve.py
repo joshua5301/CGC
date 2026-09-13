@@ -905,6 +905,34 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
+def _bandwidth(B, kind, bw_mult=1.0):
+    d = B.shape[1]
+    bw = ((B * B).sum(1).mean() / d).clamp(min=1e-12) if kind == 'erf' else None
+    if kind == 'rbf':
+        D2 = ((B * B).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (B @ B.T))
+        bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
+    return None if bw is None else bw * bw_mult      # <1: sharper / more nonlinear, >1: closer to linear
+
+
+def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000):
+    """Clustering-only feature map psi(h) = k(h,B) L^{-T} (Nystrom, B = m random rows, K_BB = L L^T),
+    so ||psi(h) - psi(h')||^2 ~= k(h,h) + k(h',h') - 2 k(h,h'), the NNGP kernel distance of the student
+    architecture = E_W ||phi(W h) - phi(W h')||^2 over a random-init MLP, i.e. the student-prior
+    expectation of the linear-student term ||W (h - h')||^2. The condensed x' stays the mean of h."""
+    g = torch.Generator(); g.manual_seed(seed)
+    B = H[torch.randperm(len(H), generator=g)[:m].to(H.device)].double()
+    d, bw = B.shape[1], _bandwidth(B.double(), kind, bw_mult)
+    K_BB = _kernel(B, B, kind, d, bw)
+    K_BB = (K_BB + K_BB.T) / 2
+    eye = torch.eye(len(B), dtype=B.dtype, device=B.device)
+    L = torch.linalg.cholesky(K_BB + 1e-8 * K_BB.diagonal().mean() * eye)
+    T = torch.linalg.solve_triangular(L, eye, upper=False).T          # L^{-T}
+    out = torch.empty(len(H), len(B), dtype=torch.float32, device=H.device)
+    for i in range(0, len(H), chunk):
+        out[i:i + chunk] = (_kernel(H[i:i + chunk].double(), B, kind, d, bw) @ T).float()
+    return out
+
+
 def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
@@ -913,13 +941,7 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
     prior='rkhs':  features phi(h) = K(h,B) L^{-T} (Cholesky) and penalty gamma * ||W||^2 = RKHS norm.
     Both call fit_probe_W, so gamma has the linear-probe semantics. Returns (pred, W, loss, gnorm)."""
     H_L, B, Y_L = H_L.double(), B.double(), Y_L.double()
-    d = B.shape[1]
-    bw = ((B * B).sum(1).mean() / d).clamp(min=1e-12) if kind == 'erf' else None
-    if kind == 'rbf':
-        D2 = ((B * B).sum(1, keepdim=True) + (B * B).sum(1).unsqueeze(0) - 2 * (B @ B.T))
-        bw = D2.clamp(min=0).flatten().median().clamp(min=1e-12)
-    if bw is not None:
-        bw = bw * bw_mult          # <1: sharper / more nonlinear, >1: closer to linear
+    d, bw = B.shape[1], _bandwidth(B, kind, bw_mult)
     K_BB = _kernel(B, B, kind, d, bw)
     K_BB = (K_BB + K_BB.T) / 2
     if prior == 'rkhs':

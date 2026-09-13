@@ -105,7 +105,10 @@ def para():
                         help='downstream mixup Beta(a,a) on the condensed set; 0 = off')
     parser.add_argument('--cluster_feat', type=str, default='last',
                         help='k-means metric space: last (A^K X), concat (all depths), '
-                             'multi (all depths + high-pass (I-A)X, (I-A)^2X); condensed x stays A^K X')
+                             'multi (all depths + high-pass (I-A)X, (I-A)^2X), '
+                             'nngp (Nystrom features of the --label_kernel NNGP kernel = student-prior metric); '
+                             'condensed x stays A^K X')
+    parser.add_argument('--nngp_basis', type=int, default=1000, help='Nystrom basis size for --cluster_feat nngp')
     parser.add_argument('--hp_w', type=float, default=1.0, help='weight of the high-pass blocks in --cluster_feat multi')
     parser.add_argument('--splitmerge', type=int, default=0,
                         help='>0: rounds of split/merge budget re-allocation under the Bregman objective (needs --bregman >= 0)')

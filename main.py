@@ -44,7 +44,10 @@ else:
     if args.landmark in ('easy', 'hard'):
         args.budget = min(int(n_keep * args.cand_mult), len(H_pool))
     Hc = None
-    if args.cluster_feat != 'last':
+    if args.cluster_feat == 'nngp':
+        Hc = nngp_feats(H_pool, args.label_kernel, min(args.nngp_basis, len(H_pool)), args.seed, args.kernel_bw)
+        print(f'cluster space[nngp/{args.label_kernel}]: {Hc.shape[1]}d Nystrom features of the student-prior kernel')
+    elif args.cluster_feat != 'last':
         Hc = multiscale_feats(pool_d, args.cluster_feat, args.hp_w)
         print(f'cluster space[{args.cluster_feat}]: {Hc.shape[1]}d '
               f'({len(pool_d)} depths' + (f', high-pass w={args.hp_w:g}' if args.cluster_feat == 'multi' else '') + ')')
