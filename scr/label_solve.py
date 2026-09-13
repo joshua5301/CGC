@@ -236,6 +236,80 @@ def trim_assign(H, k, method, frac, rounds=3):
     return assign, int((~keep).sum())
 
 
+def _cell_stats(H, P, ent, assign, k):
+    """Sufficient statistics per cell for the Bregman objective."""
+    dt, dev = H.dtype, H.device
+    cnt = torch.bincount(assign, minlength=k).to(dt)
+    sh = torch.zeros(k, H.shape[1], dtype=dt, device=dev).index_add_(0, assign, H)
+    sh2 = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, (H * H).sum(1))
+    sp = torch.zeros(k, P.shape[1], dtype=dt, device=dev).index_add_(0, assign, P)
+    se = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, ent)
+    return cnt, sh, sh2, sp, se
+
+
+def _cell_cost(cnt, sh, sh2, sp, se, s, mu):
+    """sum_t ||h_t - hbar||^2 / s + mu * sum_t KL(f_t || fbar), from sufficient statistics."""
+    c = cnt.clamp_min(1)
+    feat = (sh2 - (sh * sh).sum(-1) / c) / s
+    fbar = (sp / c.unsqueeze(-1)).clamp_min(1e-12)
+    kl = se - (sp * fbar.log()).sum(-1)                 # sum_t [sum p log p] - |C| * sum fbar log fbar
+    return feat + mu * kl
+
+
+def split_merge(H, P, assign, k, mu, s, rounds=3, frac=0.05, chunk=8192):
+    """Budget re-allocation at fixed k: each round, split the frac*k highest-cost cells with a
+    2-way Bregman Lloyd, and merge the frac*k cheapest nearest-centroid pairs; then re-settle
+    with a few Bregman sweeps. Cost is the same objective as bregman_assign."""
+    H = H.double(); P = P.double().clamp_min(1e-12); assign = assign.clone().to(H.device)
+    ent = (P * P.log()).sum(1)
+    m = max(1, int(round(frac * k)))
+    for _ in range(rounds):
+        cnt, sh, sh2, sp, se = _cell_stats(H, P, ent, assign, k)
+        cost = _cell_cost(cnt, sh, sh2, sp, se, s, mu)
+        # --- merge candidates: nearest other centroid in feature space
+        C = sh / cnt.clamp_min(1).unsqueeze(1)
+        D = torch.cdist(C, C); D.fill_diagonal_(float('inf')); D[cnt == 0] = float('inf'); D[:, cnt == 0] = float('inf')
+        nn = D.argmin(1)
+        ia = torch.arange(k, device=H.device); ib = nn
+        pair_cost = _cell_cost(cnt[ia] + cnt[ib], sh[ia] + sh[ib], sh2[ia] + sh2[ib], sp[ia] + sp[ib], se[ia] + se[ib], s, mu)
+        delta = pair_cost - cost[ia] - cost[ib]
+        delta[~torch.isfinite(D[ia, ib])] = float('inf')
+        order = delta.argsort(); used = torch.zeros(k, dtype=torch.bool, device=H.device); merges = []
+        for i in order.tolist():
+            j = int(ib[i])
+            if used[i] or used[j] or not torch.isfinite(delta[i]): continue
+            merges.append((i, j)); used[i] = used[j] = True
+            if len(merges) == m: break
+        # --- split candidates: highest cost cells not involved in a merge
+        splits = [int(j) for j in cost.argsort(descending=True).tolist() if not used[j] and cnt[j] >= 4][:len(merges)]
+        if not merges or not splits:
+            break
+        freed = []
+        for (i, j) in merges:
+            assign[assign == j] = i; freed.append(j)
+        for j, new_id in zip(splits, freed):
+            idx = (assign == j).nonzero().flatten()
+            Hj, Pj, ej = H[idx], P[idx], ent[idx]
+            # init: the two members farthest apart in the combined metric from the cell mean
+            c0 = Hj.mean(0); f0 = Pj.mean(0).clamp_min(1e-12)
+            d0 = ((Hj - c0) ** 2).sum(1) / s + mu * (ej - Pj @ f0.log())
+            a_ = int(d0.argmax())
+            d1 = ((Hj - Hj[a_]) ** 2).sum(1) / s + mu * (ej - Pj @ Pj[a_].log())
+            b_ = int(d1.argmax())
+            lab = torch.zeros(len(idx), dtype=torch.long, device=H.device)
+            for _it in range(10):
+                cs = torch.stack([Hj[lab == 0].mean(0) if (lab == 0).any() else Hj[a_], Hj[lab == 1].mean(0) if (lab == 1).any() else Hj[b_]])
+                fs = torch.stack([Pj[lab == 0].mean(0) if (lab == 0).any() else Pj[a_], Pj[lab == 1].mean(0) if (lab == 1).any() else Pj[b_]]).clamp_min(1e-12)
+                dd = torch.cdist(Hj, cs) ** 2 / s + mu * (ej.unsqueeze(1) - Pj @ fs.log().T)
+                new_lab = dd.argmin(1)
+                if torch.equal(new_lab, lab): break
+                lab = new_lab
+            assign[idx[lab == 1]] = new_id
+        assign, _ = bregman_assign(H, P, assign, k, mu, iters=5, chunk=chunk)
+    cnt = torch.bincount(assign, minlength=k)
+    return assign, len(merges), int(cnt.min()), int(cnt.max())
+
+
 def bregman_assign(H, P, assign, k, mu, iters=20, chunk=8192):
     """Lloyd iterations for  sum_j sum_{t in C_j} ||h_t - hbar_j||^2 / s  +  mu * KL(p_t || ybar_j).
     Both terms are Bregman divergences, so the optimal centres are the plain means (features) and
@@ -458,6 +532,15 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
         assign, moved = bregman_assign(Hw, P.to(Hw.device), assign.to(Hw.device), k, args.bregman)
         assign = assign.cpu()
         print(f'bregman: mu {args.bregman:g}  last sweep moved {moved} nodes')
+    if getattr(args, 'splitmerge', 0) > 0 and P is not None:
+        Hd, Pd = Hw.double(), P.to(Hw.device).double()
+        a0 = assign.to(Hw.device)
+        C0 = torch.zeros(k, Hd.shape[1], dtype=Hd.dtype, device=Hd.device).index_add_(0, a0, Hd)
+        C0 = C0 / torch.bincount(a0, minlength=k).clamp_min(1).unsqueeze(1).to(Hd.dtype)
+        s0 = ((Hd - C0[a0]) ** 2).sum(1).mean().clamp_min(1e-12)
+        assign, n_m, lo, hi = split_merge(Hd, Pd, a0, k, args.bregman, s0, args.splitmerge, args.sm_frac)
+        assign = assign.cpu()
+        print(f'splitmerge: {args.splitmerge} rounds x {n_m} moves (frac {args.sm_frac:g})  cell size min/max {lo}/{hi}')
     h, remap = _cluster_means(H_pool, assign, k)
     return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
 
