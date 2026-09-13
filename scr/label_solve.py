@@ -214,6 +214,35 @@ def _whiten(H, alpha, rtol=1e-7):
     return (H - H.mean(0, keepdim=True)) @ T
 
 
+def balance_assign(H, assign, k, slack=1.0, iters=20):
+    """Equal-mass repair of a partition: cells above cap = ceil(N/k * slack) release their
+    farthest members to the nearest cell with spare capacity. Centroids are refreshed each sweep."""
+    H = H.double(); N = len(H); assign = assign.clone().to(H.device)
+    cap = int(math.ceil(N / k * slack))
+    for _ in range(iters):
+        cnt = torch.bincount(assign, minlength=k)
+        over = (cnt > cap).nonzero().flatten()
+        if len(over) == 0:
+            break
+        C = torch.zeros(k, H.shape[1], dtype=H.dtype, device=H.device).index_add_(0, assign, H)
+        C = C / cnt.clamp_min(1).unsqueeze(1).to(H.dtype)
+        D = torch.cdist(H, C)                                     # N x k
+        room = (cap - cnt).clamp_min(0)
+        for j in over.tolist():
+            members = (assign == j).nonzero().flatten()
+            n_move = int(cnt[j] - cap)
+            # farthest members of cell j leave first
+            far = members[D[members, j].argsort(descending=True)[:n_move]]
+            for t in far.tolist():
+                d = D[t].clone(); d[room <= 0] = float('inf'); d[j] = float('inf')
+                tgt = int(d.argmin())
+                if not torch.isfinite(d[tgt]):
+                    break
+                assign[t] = tgt; room[tgt] -= 1; room[j] += 1
+    cnt = torch.bincount(assign, minlength=k)
+    return assign, int(cnt.min()), int(cnt.max()), cap
+
+
 def _assign(H, k, method):
     from scr.utils import clustering_fast
     labels = clustering_fast(H.cpu().numpy().astype('float32'), int(k), method)
@@ -364,6 +393,9 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None):
     else:
         method = 'nocluster' if args.landmark == 'random_split' else args.clustering
         assign, k = _assign(Hw, n_p, method), n_p
+        if getattr(args, 'balanced', 0.0) > 0:
+            assign, lo, hi, cap = balance_assign(Hw, assign, k, args.balanced)
+            print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
     h, remap = _cluster_means(H_pool, assign, k)
     return h, remap, [_cluster_means(E, assign, k)[0] for E in extra]
 

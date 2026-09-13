@@ -32,6 +32,8 @@ def para():
     parser.add_argument('--weight_decay', type=float, default=5e-4)
     parser.add_argument('--dropout', type=float, default=0.5)
     parser.add_argument('--clustering', type=str, default='spectral', help='spectral, kmeans')
+    parser.add_argument('--balanced', type=float, default=0.0,
+                        help='>0: equal-mass repair of the k-means partition, cap = ceil(N/k * value) nodes per cell')
     parser.add_argument('--generate_adj', type=int, default=1, help='generate the condensed graph')
     parser.add_argument('--adj_T', type=float, default=0.95, help='threshold for condensed graph')
     parser.add_argument('--alpha', type=float, default=3, help='weight for smooth loss')
