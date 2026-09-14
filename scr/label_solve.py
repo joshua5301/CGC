@@ -189,6 +189,20 @@ def select_pool(args, data, H, extra=()):
     return H[mask], data.y[mask], data.train_mask[mask], [E[mask] for E in extra]
 
 
+def _cluster_wmeans(H, assign, k, w):
+    """Weighted cell representatives sum_t w_t h_t with per-cell normalised weights w (geometric median
+    when w are the converged Weiszfeld weights). Empty cells are dropped like _cluster_means."""
+    dtype, device = H.dtype, H.device
+    assign, w = assign.to(device), w.to(device=device, dtype=dtype)
+    acc = torch.zeros(k, H.shape[1], dtype=dtype, device=device).index_add_(0, assign, w.unsqueeze(1) * H)
+    cnt = torch.zeros(k, dtype=dtype, device=device).index_add_(
+        0, assign, torch.ones(len(H), dtype=dtype, device=device))
+    keep = cnt > 0
+    remap = torch.full((k,), -1, dtype=torch.long, device=device)
+    remap[keep] = torch.arange(int(keep.sum()), device=device)
+    return acc[keep], remap[assign]
+
+
 def _cluster_means(H, assign, k):
     dtype, device = H.dtype, H.device
     assign = assign.to(device)
@@ -339,6 +353,60 @@ def bregman_assign(H, P, assign, k, mu, iters=20, chunk=8192):
         if moved == 0:
             break
     return assign, moved
+
+
+def _weiszfeld(H, assign, k, iters=30, eps=1e-9):
+    """Geometric median of every cell (argmin_c sum_t ||h_t - c||), Weiszfeld iterations from the mean.
+    Returns the medians and the final per-node weights 1/||h_t - c_j|| (normalised within the cell)."""
+    dt, dev = H.dtype, H.device
+    cnt = torch.bincount(assign, minlength=k).clamp_min(1).to(dt)
+    c = torch.zeros(k, H.shape[1], dtype=dt, device=dev).index_add_(0, assign, H) / cnt.unsqueeze(1)
+    for _ in range(iters):
+        w = 1.0 / (H - c[assign]).norm(dim=1).clamp_min(eps)
+        num = torch.zeros(k, H.shape[1], dtype=dt, device=dev).index_add_(0, assign, w.unsqueeze(1) * H)
+        den = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, w).clamp_min(eps)
+        c = num / den.unsqueeze(1)
+    w = 1.0 / (H - c[assign]).norm(dim=1).clamp_min(eps)
+    den = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, w).clamp_min(eps)
+    return c, w / den[assign]
+
+
+def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30):
+    """Lloyd iterations for the Lipschitz objective  sum_j sum_{t in C_j} ||h_t - c_j|| / s  +  mu * KL(p_t || ybar_j):
+    the unsquared feature distance is what the global-Lipschitz bound produces, so its optimal centre is the
+    geometric median (Weiszfeld) instead of the mean; the label term is unchanged (mean posterior).
+    s = mean feature distance of the initial partition. P=None or mu=0 gives plain k-medians refinement.
+    Returns (assign, moved, medians, weights) with weights = Weiszfeld weights normalised per cell."""
+    H = H.double(); assign = assign.clone().to(H.device)
+    N = len(H)
+    use_lab = P is not None and mu > 0
+    if use_lab:
+        P = P.double().clamp_min(1e-12)
+        ent = (P * P.log()).sum(1)
+    def centres(a):
+        c, w = _weiszfeld(H, a, k, w_iters)
+        if not use_lab:
+            return c, None, w
+        cnt = torch.bincount(a, minlength=k).clamp_min(1).to(H.dtype).unsqueeze(1)
+        yc = torch.zeros(k, P.shape[1], dtype=H.dtype, device=H.device).index_add_(0, a, P) / cnt
+        return c, yc.clamp_min(1e-12), w
+    hc, yc, w = centres(assign)
+    s = (H - hc[assign]).norm(dim=1).mean().clamp_min(1e-12)
+    moved = 0
+    for _ in range(iters):
+        new = torch.empty_like(assign)
+        logy = yc.log() if use_lab else None
+        for i in range(0, N, chunk):
+            cost = torch.cdist(H[i:i + chunk], hc) / s                          # b x k, unsquared
+            if use_lab:
+                cost = cost + mu * (ent[i:i + chunk].unsqueeze(1) - P[i:i + chunk] @ logy.T)
+            new[i:i + chunk] = cost.argmin(1)
+        moved = int((new != assign).sum())
+        assign = new
+        hc, yc, w = centres(assign)
+        if moved == 0:
+            break
+    return assign, moved, hc, w
 
 
 def balance_assign(H, assign, k, slack=1.0, iters=20):
@@ -528,6 +596,13 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
         if getattr(args, 'balanced', 0.0) > 0:
             assign, lo, hi, cap = balance_assign(Hw, assign, k, args.balanced)
             print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
+    if getattr(args, 'cluster_obj', 'l2') == 'l1':
+        Pd = None if P is None else P.to(Hw.device)
+        assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0))
+        assign = assign.cpu()
+        print(f'l1: distance-sum objective, mu {getattr(args, "bregman", 0.0):g}  last sweep moved {moved} nodes')
+        h, remap = _cluster_wmeans(H_pool, assign, k, w.to(H_pool.dtype))
+        return h, remap, [_cluster_wmeans(E, assign, k, w.to(E.dtype))[0] for E in extra]
     if getattr(args, 'bregman', 0.0) > 0 and P is not None:
         assign, moved = bregman_assign(Hw, P.to(Hw.device), assign.to(Hw.device), k, args.bregman)
         assign = assign.cpu()

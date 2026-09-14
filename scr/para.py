@@ -109,6 +109,9 @@ def para():
                              'nngp (Nystrom features of the --label_kernel NNGP kernel = student-prior metric); '
                              'condensed x stays A^K X')
     parser.add_argument('--nngp_basis', type=int, default=1000, help='Nystrom basis size for --cluster_feat nngp')
+    parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
+                        help='l2: squared distance + mu*KL, mean centres (Bregman k-means); '
+                             'l1: distance sum + mu*KL (the Lipschitz bound), geometric-median centres (Weiszfeld)')
     parser.add_argument('--hp_w', type=float, default=1.0, help='weight of the high-pass blocks in --cluster_feat multi')
     parser.add_argument('--splitmerge', type=int, default=0,
                         help='>0: rounds of split/merge budget re-allocation under the Bregman objective (needs --bregman >= 0)')
