@@ -887,7 +887,7 @@ def dual_predictor(Hp, dual):
 def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     H_L, Y_L = H_L.double(), Y_L.double()
     m, d = H_L.shape
-    g = gamma * (H_L * H_L).sum() / (m * d)
+    g = gamma * H_L.norm() ** 2 / (m * d)
     W = (init.clone() if init is not None else
          torch.zeros(d, Y_L.shape[1], dtype=H_L.dtype, device=H_L.device)).requires_grad_(True)
     opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=1e-10,
@@ -903,6 +903,17 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     with torch.enable_grad():
         loss = closure()
     return W.detach(), loss.item(), W.grad.norm().item()
+
+
+def _chunked(fn, X, chunk):
+    if len(X) <= chunk:
+        return fn(X)
+    first = fn(X[:chunk])
+    out = torch.empty(len(X), *first.shape[1:], dtype=first.dtype, device=first.device)
+    out[:chunk] = first
+    for i in range(chunk, len(X), chunk):
+        out[i:i + chunk] = fn(X[i:i + chunk])
+    return out
 
 
 def _bandwidth(B, kind, bw_mult=1.0):
@@ -927,13 +938,10 @@ def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000):
     eye = torch.eye(len(B), dtype=B.dtype, device=B.device)
     L = torch.linalg.cholesky(K_BB + 1e-8 * K_BB.diagonal().mean() * eye)
     T = torch.linalg.solve_triangular(L, eye, upper=False).T          # L^{-T}
-    out = torch.empty(len(H), len(B), dtype=torch.float32, device=H.device)
-    for i in range(0, len(H), chunk):
-        out[i:i + chunk] = (_kernel(H[i:i + chunk].double(), B, kind, d, bw) @ T).float()
-    return out
+    return _chunked(lambda x: (_kernel(x.double(), B, kind, d, bw) @ T).float(), H, chunk)
 
 
-def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0):
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0, chunk=8192):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
                    the mean dropped) and penalty gamma * ||V||^2 = gamma * ||f(B)||^2. This is the
@@ -952,10 +960,10 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
         lam, U = torch.linalg.eigh(K_BB)
         keep = lam > 1e-3 * lam.mean()
         T = U[:, keep] @ torch.diag(1.0 / lam[keep]) @ U[:, keep].T       # K_BB^{+}
-    feat = lambda X: _kernel(X.double(), B, kind, d, bw) @ T
+    feat = lambda X: _chunked(lambda x: _kernel(x.double(), B, kind, d, bw) @ T, X, chunk)
     W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps)
     Wf, Bf, Tf, bwf = W.float(), B.float(), T.float(), (None if bw is None else float(bw))
-    pred = lambda x: (_kernel(x.float().to(Bf.device), Bf, kind, d, bwf) @ Tf) @ Wf
+    pred = lambda x: _chunked(lambda z: (_kernel(z.float().to(Bf.device), Bf, kind, d, bwf) @ Tf) @ Wf, x, chunk)
     return pred, W, loss, gnorm
 
 
