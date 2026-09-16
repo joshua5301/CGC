@@ -133,12 +133,14 @@ for stage, title in [('final', 'MAIN TABLE - Ours (val-selected recipe), repeat 
     s = df[df.stage == stage]
     if not len(s):
         continue
+    s = s.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1)   # several repeat-10 runs per cell -> keep the val-best
     s = s.assign(cell=s.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f}", axis=1),
                  cfg=s.apply(lambda x: f"g={x['gamma']:g} mu={x['mu']:g} do={x['drop']:g} wd={x['wd']:g}", axis=1))
     print(f'\n##### {title}')
     print(s.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
     print(s.pivot_table(index='ds', columns='ratio', values='cfg', aggfunc='first').to_string())
-fin, fix = df[df.stage == 'final'], df[df.stage == 'fixed']
+top = lambda st: df[df.stage == st].sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1)
+fin, fix = top('final'), top('fixed')
 if len(fin) and len(fix):
     d = (fin.set_index(['ds', 'ratio']).test - fix.set_index(['ds', 'ratio']).test).round(2)
     print('\n##### val-selected minus fixed recipe (test)'); print(d.unstack('ratio').to_string())
