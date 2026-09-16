@@ -1,6 +1,7 @@
 # ============ Cell 1: common (identical in all sessions except SESSION) =============
 # FINAL main-table run, two stages.
-#   stage 1: gamma x mu grid, 6 dropouts (wd fixed 5e-4; repeat 1 on arxiv/reddit, 2 on the small graphs)
+#   stage 1: coordinate search over gamma / mu (or full grid), 6 dropouts, wd fixed 5e-4
+#            (repeat 1 on arxiv/reddit, 2 on the small graphs)
 #            -> pick (gamma, mu, dropout, wd) by val
 #   stage 2: the val-best config at repeat 10 (single recipe)   -> main-table cell
 #            + the fixed GCond/ClustGDD recipe (dropout 0.5, wd 5e-4, all datasets) at its own val-best (gamma, mu),
@@ -83,11 +84,37 @@ def pick(ds, r, fixed=False):
         s1 = s1[(s1['drop'] == 0.5) & (s1.wd == WD)]
     return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 
-# ============ Cell 2: stage 1 - gamma x mu grid x 6 dropouts (20 condensations per cell; done() skips logged ones) =============
+# ============ Cell 2: stage 1 - coordinate search (default) or full grid =============
+# gamma and mu interact monotonically (larger mu -> smaller optimal gamma; smaller gamma -> larger mu gain), so:
+#   pass 1: mu = 1, sweep gamma            pass 2: at the val-best gamma, sweep the other mu values
+#   pass 3: if the chosen mu != 1, re-check the two neighbouring gammas at that mu       (<= 10 condensations per cell)
+FULL_GRID = False
+def best_at(ds, r, **fix):
+    s1 = load(); s1 = s1[(s1.stage == 'stage1') & (s1.ds == ds) & (s1.ratio == r)]
+    for k, v in fix.items():
+        s1 = s1[s1[k] == v]
+    return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 for ds, r in CELLS:
-    for gamma, mu in itertools.product(GAMMAS, MUS):
-        if not done(ds, r, gamma, mu, 'stage1'):
-            run(ds, r, gamma, mu, DOWN1, REP1(ds), 'stage1')
+    if FULL_GRID:
+        for gamma, mu in itertools.product(GAMMAS, MUS):
+            if not done(ds, r, gamma, mu, 'stage1'):
+                run(ds, r, gamma, mu, DOWN1, REP1(ds), 'stage1')
+        continue
+    for gamma in GAMMAS:                                               # pass 1
+        if not done(ds, r, gamma, 1.0, 'stage1'):
+            run(ds, r, gamma, 1.0, DOWN1, REP1(ds), 'stage1')
+    g1 = best_at(ds, r, mu=1.0).gamma
+    for mu in MUS:                                                     # pass 2
+        if not done(ds, r, g1, mu, 'stage1'):
+            run(ds, r, g1, mu, DOWN1, REP1(ds), 'stage1')
+    m2 = best_at(ds, r, gamma=g1).mu
+    if m2 != 1.0:                                                      # pass 3
+        i = GAMMAS.index(g1)
+        for gamma in GAMMAS[max(0, i - 1):i + 2]:
+            if not done(ds, r, gamma, m2, 'stage1'):
+                run(ds, r, gamma, m2, DOWN1, REP1(ds), 'stage1')
+    b = pick(ds, r)
+    print(f"--> {ds} {r:g}: pass1 gamma {g1:g} | pass2 mu {m2:g} | final gamma {b.gamma:g} mu {b.mu:g} do {b['drop']:g}  val {b.val:.2f} test {b.test:.2f}")
 
 # ============ Cell 2b: selected config per cell (edge = at a grid boundary) =============
 print('##### selected config per cell (edge = at a grid boundary)')
