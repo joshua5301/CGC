@@ -16,7 +16,7 @@ import pandas as pd
 from google.colab import drive
 drive.mount('/content/drive')
 LOGDIR = '/content/drive/MyDrive/cgc_tune'; os.makedirs(LOGDIR, exist_ok=True)
-TAG = 'final'
+TAG = 'final2'          # new log family: earlier 'final_*' files (grid pass, wd axis, fn=1 on C) are left untouched
 LOG = f'{LOGDIR}/{TAG}_{SESSION}.jsonl'
 pd.set_option('display.width', 220)
 subprocess.run('git -C /content/CGC pull', shell=True)
