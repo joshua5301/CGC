@@ -29,7 +29,7 @@ RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
 FEATNORM = {}                                          # raw features everywhere (cora_fn / citeseer_fn cells: normalisation hurts cora, neutral on citeseer)
 FIXED_WD = {'arxiv': 0.0}                              # GCond recipe: wd 5e-4 everywhere except arxiv (0)
 MINE = {'A': ['arxiv'], 'B': ['reddit'], 'C': ['cora', 'citeseer', 'flickr']}[SESSION]
-GAMMAS = [1e-3, 1e-2, 3e-2]
+GAMMAS = [1e-4, 1e-3, 1e-2, 3e-2]     # 1e-4 added: 1e-3 sat on the grid edge in 4/6 large-graph cells
 MUS    = [0.0, 1.0]
 DOWN1  = '0,0.3,0.5,0.7;0,1e-4,5e-4,2e-3'
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+): ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
@@ -74,7 +74,8 @@ def pick(ds, r, fixed=False):
         s1 = s1[(s1['drop'] == 0.5) & (s1.wd == FIXED_WD.get(ds, 5e-4))]
     return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 
-# ============ Cell 2: stage 1 - gamma x mu grid, repeat 2, 16 recipes (6 condensations per cell) =============
+# ============ Cell 2: stage 1 - gamma x mu grid, repeat 2, 16 recipes (8 condensations per cell; done() skips logged ones) =============
+# Run order after the first pass: Cell 1 -> Cell 2 (new gammas) -> Cell 2b (mu extension at the val-best gamma) -> Cell 3 -> Cell 4
 for ds in MINE:
     for r in RATIOS[ds]:
         for gamma, mu in itertools.product(GAMMAS, MUS):
