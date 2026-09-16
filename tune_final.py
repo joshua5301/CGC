@@ -75,7 +75,7 @@ def pick(ds, r, fixed=False):
     return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 
 # ============ Cell 2: stage 1 - gamma x mu grid, repeat 2, 16 recipes (8 condensations per cell; done() skips logged ones) =============
-# Run order after the first pass: Cell 1 -> Cell 2 (new gammas) -> Cell 2b (mu extension at the val-best gamma) -> Cell 3 -> Cell 4
+# Run order after the first pass: Cell 1 -> Cell 2 (new gammas) -> Cell 2b (mu extension) -> Cell 2c (wd extension) -> Cell 3 -> Cell 4
 for ds in MINE:
     for r in RATIOS[ds]:
         for gamma, mu in itertools.product(GAMMAS, MUS):
@@ -102,6 +102,22 @@ for ds in MINE:
         sub = bm[(bm.ds == ds) & (bm.ratio == r) & (bm.gamma == g)].sort_values('mu')
         print(f"{ds} {r:g} (gamma {g:g}):  " + '  '.join(f"mu={x.mu:g}: {x.test:.2f} (val {x.val:.2f})" for _, x in sub.iterrows()))
         print('    within-var: ' + '  '.join(f"mu={x.mu:g}: {re.search(r'within-var [\d.]+ \(([\d.]+)%', x.diag)[1] if x.diag else '?'}%" for _, x in sub.iterrows()))
+
+# ============ Cell 2c: weight-decay upper extension - at each cell's val-best (gamma, mu), wd = 5e-3 x 4 dropouts (repeat 2) =============
+# Small graphs often select wd = 2e-3 (the grid edge); one run per cell, logged as stage1 so Cell 3 re-picks.
+DOWN_WD = '0,0.3,0.5,0.7;5e-3'
+for ds in MINE:
+    for r in RATIOS[ds]:
+        b = pick(ds, r)
+        if b is not None and not done(ds, r, b.gamma, b.mu, 'stage1', DOWN_WD):
+            run(ds, r, b.gamma, b.mu, DOWN_WD, 2, 'stage1')
+print('##### selected recipe per cell after the extension (edge = wd at 0 or 5e-3, dropout at 0 or 0.7)')
+for ds in MINE:
+    for r in RATIOS[ds]:
+        b = pick(ds, r)
+        if b is not None:
+            edge = ('wd-edge ' if b.wd in (0.0, 5e-3) else '') + ('do-edge' if b['drop'] in (0.0, 0.7) else '')
+            print(f"{ds} {r:g}: gamma {b.gamma:g} mu {b.mu:g} do {b['drop']:g} wd {b.wd:g}  val {b.val:.2f} test {b.test:.2f}  {edge}")
 
 # ============ Cell 3: stage 2 - repeat 10 at the val-best config and at the fixed recipe =============
 for ds in MINE:
