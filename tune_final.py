@@ -5,7 +5,7 @@
 #            + the fixed GCond/ClustGDD recipe (dropout 0.5, wd 5e-4; arxiv wd 0) at its own val-best (gamma, mu),
 #              repeat 10                                          -> "Ours (fixed recipe)" row
 # Method: H = A^2 X, relu1 kernel teacher (basis 3000, rkhs, gamma), Euclidean k-means + mu*KL refinement,
-# x' = cell mean, y' = cell mean posterior, A' = I. Preprocessing as GCond/GEOM/ClustGDD (see FEATNORM).
+# x' = cell mean, y' = cell mean posterior, A' = I. No feature preprocessing (see FEATNORM).
 SESSION = 'C'          # 'A' / 'B' / 'C'
 import subprocess, re, json, os, time, glob, itertools
 import pandas as pd
@@ -26,7 +26,7 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
 RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}
-FEATNORM = {'cora': 1, 'citeseer': 1, 'flickr': 1}     # <- set cora to 0 if the cora_fn cell says so
+FEATNORM = {}                                          # raw features everywhere (cora_fn / citeseer_fn cells: normalisation hurts cora, neutral on citeseer)
 FIXED_WD = {'arxiv': 0.0}                              # GCond recipe: wd 5e-4 everywhere except arxiv (0)
 MINE = {'A': ['arxiv'], 'B': ['reddit'], 'C': ['cora', 'citeseer', 'flickr']}[SESSION]
 GAMMAS = [1e-3, 1e-2, 3e-2]
