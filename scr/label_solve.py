@@ -998,23 +998,24 @@ def refine_centres(h, Y, kfun, lam, s, steps=50):
     i.e. move the representative to where the teacher f predicts the cell's mean label (closes the Jensen gap
     f(hbar_j) != ybar_j) while a quadratic tether keeps it near the mean. s = mean within-cell squared
     distance, so lam is dimensionless. Returns (c, kl_before, kl_after, mean shift / sqrt(s))."""
-    h0 = h.detach().float()
-    Yd = Y.detach().float().to(h0.device)
+    kfun = getattr(kfun, "dbl", kfun)          # double predictor: finite input gradients at coincident points
+    h0 = h.detach().double()
+    Yd = Y.detach().double().to(h0.device)
     c = h0.clone().requires_grad_(True)
     kl = lambda z: (Yd * (Yd.clamp_min(1e-12).log() - F.log_softmax(z, dim=1))).sum(1)
     with torch.no_grad():
-        kl0 = kl(kfun(h0).float()).mean().item()
+        kl0 = kl(kfun(h0).double()).mean().item()
     opt = torch.optim.LBFGS([c], max_iter=steps, history_size=20, tolerance_grad=1e-9,
                             tolerance_change=1e-12, line_search_fn='strong_wolfe')
     def closure():
         opt.zero_grad()
-        loss = kl(kfun(c).float()).sum() + lam * ((c - h0) ** 2).sum() / s
+        loss = kl(kfun(c).double()).sum() + lam * ((c - h0) ** 2).sum() / s
         loss.backward()
         return loss
     opt.step(closure)
     c = c.detach()
     with torch.no_grad():
-        kl1 = kl(kfun(c).float()).mean().item()
+        kl1 = kl(kfun(c).double()).mean().item()
         shift = ((c - h0).norm(dim=1) / s.sqrt()).mean().item()
     return c.to(h.dtype), kl0, kl1, shift
 
@@ -1067,6 +1068,9 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
     W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps)
     Wf, Bf, Tf, bwf = W.float(), B.float(), T.float(), (None if bw is None else float(bw))
     pred = lambda x: _chunked(lambda z: (_kernel(z.float().to(Bf.device), Bf, kind, d, bwf) @ Tf) @ Wf, x, chunk)
+    # double-precision twin for input-gradient use (float32 turns the 1-1e-12 clamp into 1.0 and acos' blows up
+    # at coincident points, e.g. a cell mean equal to a basis row on duplicate-feature graphs)
+    pred.dbl = lambda x: _chunked(lambda z: (_kernel(z.double().to(B.device), B, kind, d, bw) @ T) @ W, x, chunk)
     return pred, W, loss, gnorm
 
 
