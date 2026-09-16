@@ -109,6 +109,10 @@ def para():
                              'nngp (Nystrom features of the --label_kernel NNGP kernel = student-prior metric); '
                              'condensed x stays A^K X')
     parser.add_argument('--nngp_basis', type=int, default=1000, help='Nystrom basis size for --cluster_feat nngp')
+    parser.add_argument('--refine_c', type=float, default=-1.0,
+                        help='>=0: move each condensed x_j from the cell mean to argmin CE(ybar_j, f(x)) + refine_c*||x-hbar_j||^2/s '
+                             'under the kernel teacher f (teacher-consistent representatives); -1 = off')
+    parser.add_argument('--refine_steps', type=int, default=50, help='LBFGS iterations for --refine_c')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
                         help='l2: squared distance + mu*KL, mean centres (Bregman k-means); '
                              'l1: distance sum + mu*KL (the Lipschitz bound), geometric-median centres (Weiszfeld)')

@@ -991,6 +991,34 @@ def _chunked(fn, X, chunk):
     return out
 
 
+def refine_centres(h, Y, kfun, lam, s, steps=50):
+    """Teacher-consistent representatives (training-free counterpart of loss-matching refinement with the
+    teacher as the fixed student). Per cell, starting from the mean hbar_j,
+        c_j = argmin_c  CE(ybar_j, softmax(f(c)))  +  lam * ||c - hbar_j||^2 / s,
+    i.e. move the representative to where the teacher f predicts the cell's mean label (closes the Jensen gap
+    f(hbar_j) != ybar_j) while a quadratic tether keeps it near the mean. s = mean within-cell squared
+    distance, so lam is dimensionless. Returns (c, kl_before, kl_after, mean shift / sqrt(s))."""
+    h0 = h.detach().float()
+    Yd = Y.detach().float().to(h0.device)
+    c = h0.clone().requires_grad_(True)
+    kl = lambda z: (Yd * (Yd.clamp_min(1e-12).log() - F.log_softmax(z, dim=1))).sum(1)
+    with torch.no_grad():
+        kl0 = kl(kfun(h0).float()).mean().item()
+    opt = torch.optim.LBFGS([c], max_iter=steps, history_size=20, tolerance_grad=1e-9,
+                            tolerance_change=1e-12, line_search_fn='strong_wolfe')
+    def closure():
+        opt.zero_grad()
+        loss = kl(kfun(c).float()).sum() + lam * ((c - h0) ** 2).sum() / s
+        loss.backward()
+        return loss
+    opt.step(closure)
+    c = c.detach()
+    with torch.no_grad():
+        kl1 = kl(kfun(c).float()).mean().item()
+        shift = ((c - h0).norm(dim=1) / s.sqrt()).mean().item()
+    return c.to(h.dtype), kl0, kl1, shift
+
+
 def _bandwidth(B, kind, bw_mult=1.0):
     d = B.shape[1]
     bw = ((B * B).sum(1).mean() / d).clamp(min=1e-12) if kind == 'erf' else None

@@ -235,6 +235,14 @@ else:
                                else ctx['kfun'](pf).double() if 'kfun' in ctx
                                else dual_predictor(ctx.get('basis', hl), ctx['dual'])(pf).double(), dim=1)
                 cell_diag(Pd, assign, len(h))
+        if args.refine_c >= 0 and 'kfun' in ctx and assign is not None:
+            if args.label_feat != 'last':
+                raise SystemExit('--refine_c needs --label_feat last (teacher and condensed x in the same space)')
+            a_dev = assign.to(h.device)
+            s_c = ((H_pool.to(h.device) - h[a_dev]) ** 2).sum(1).mean().clamp_min(1e-12)
+            h, kl0, kl1, shift = refine_centres(h, Y, ctx['kfun'], args.refine_c, s_c, args.refine_steps)
+            print(f'refine_c: lam {args.refine_c:g}  KL(ybar || f(c)) {kl0:.4f} -> {kl1:.4f}  '
+                  f'mean shift {shift:.3f} x within-cell radius')
         if args.feat_sub:
             Wl = ctx['W'] if 'W' in ctx else fit_probe_W(H_fit, T_fit, args.gamma, args.ce_steps)[0]
             Bq = torch.linalg.qr(Wl.double().to(h.device))[0].float()
