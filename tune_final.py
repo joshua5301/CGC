@@ -75,12 +75,22 @@ def pick(ds, r, fixed=False):
     return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 
 # ============ Cell 2: stage 1 - gamma x mu grid, repeat 2, 16 recipes (8 condensations per cell; done() skips logged ones) =============
-# Run order after the first pass: Cell 1 -> Cell 2 (new gammas) -> Cell 2b (mu extension) -> Cell 2c (wd extension) -> Cell 3 -> Cell 4
+# Run order after the first pass: Cell 1 -> Cell 2 (new gammas) -> Cell 2a (gamma 1e-1 at the 3e-2 edge) -> Cell 2b (mu extension) -> Cell 2c (wd extension) -> Cell 3 -> Cell 4
 for ds in MINE:
     for r in RATIOS[ds]:
         for gamma, mu in itertools.product(GAMMAS, MUS):
             if not done(ds, r, gamma, mu, 'stage1'):
                 run(ds, r, gamma, mu, DOWN1, 2, 'stage1')
+
+# ============ Cell 2a: gamma upper extension - where the val-best gamma is the grid edge 3e-2, add gamma 1e-1 x mu {0, 1} =============
+# flickr (weak teacher, noisy posteriors) selects 3e-2 repeatedly and picked 1e-1 in the old wide grid.
+for ds in MINE:
+    for r in RATIOS[ds]:
+        b = pick(ds, r)
+        if b is not None and b.gamma == max(GAMMAS):
+            for mu in MUS:
+                if not done(ds, r, 1e-1, mu, 'stage1'):
+                    run(ds, r, 1e-1, mu, DOWN1, 2, 'stage1')
 
 # ============ Cell 2b: mu extension - at each cell's val-best gamma, add mu in {0.3, 3, 10} (repeat 2) =============
 # Logged as stage1, so Cell 3 re-picks automatically; only cells where a new mu wins on val get a new repeat-10 run.
