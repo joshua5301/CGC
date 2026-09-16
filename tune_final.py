@@ -81,6 +81,27 @@ for ds in MINE:
             if not done(ds, r, gamma, mu, 'stage1'):
                 run(ds, r, gamma, mu, DOWN1, 2, 'stage1')
 
+# ============ Cell 2b: mu extension - at each cell's val-best gamma, add mu in {0.3, 3, 10} (repeat 2) =============
+# Logged as stage1, so Cell 3 re-picks automatically; only cells where a new mu wins on val get a new repeat-10 run.
+MUS_EXT = [0.3, 3.0, 10.0]
+for ds in MINE:
+    for r in RATIOS[ds]:
+        b = pick(ds, r)
+        if b is None:
+            continue
+        for mu in MUS_EXT:
+            if not done(ds, r, b.gamma, mu, 'stage1'):
+                run(ds, r, b.gamma, mu, DOWN1, 2, 'stage1')
+print('##### mu sweep at the val-best gamma (val-selected recipe, repeat 2)')
+s1 = load(); s1 = s1[s1.stage == 'stage1']
+bm = s1.sort_values('val', ascending=False).groupby(['ds', 'ratio', 'gamma', 'mu']).head(1)
+for ds in MINE:
+    for r in RATIOS[ds]:
+        g = pick(ds, r).gamma
+        sub = bm[(bm.ds == ds) & (bm.ratio == r) & (bm.gamma == g)].sort_values('mu')
+        print(f"{ds} {r:g} (gamma {g:g}):  " + '  '.join(f"mu={x.mu:g}: {x.test:.2f} (val {x.val:.2f})" for _, x in sub.iterrows()))
+        print('    within-var: ' + '  '.join(f"mu={x.mu:g}: {re.search(r'within-var [\d.]+ \(([\d.]+)%', x.diag)[1] if x.diag else '?'}%" for _, x in sub.iterrows()))
+
 # ============ Cell 3: stage 2 - repeat 10 at the val-best config and at the fixed recipe =============
 for ds in MINE:
     for r in RATIOS[ds]:
