@@ -1,9 +1,9 @@
 # ============ Cell 1: common (identical in all sessions except SESSION) =============
 # FINAL main-table run, two stages.
-#   stage 1: gamma x mu grid, 24 downstream recipes (repeat 1 on arxiv/reddit, 2 on the small graphs)
+#   stage 1: gamma x mu grid, 6 dropouts (wd fixed 5e-4; repeat 1 on arxiv/reddit, 2 on the small graphs)
 #            -> pick (gamma, mu, dropout, wd) by val
 #   stage 2: the val-best config at repeat 10 (single recipe)   -> main-table cell
-#            + the fixed GCond/ClustGDD recipe (dropout 0.5, wd 5e-4; arxiv wd 0) at its own val-best (gamma, mu),
+#            + the fixed GCond/ClustGDD recipe (dropout 0.5, wd 5e-4, all datasets) at its own val-best (gamma, mu),
 #              repeat 10                                          -> "Ours (fixed recipe)" row
 # Method: H = A^2 X, relu1 kernel teacher (basis 3000, rkhs, gamma), Euclidean k-means + mu*KL refinement,
 # x' = cell mean, y' = cell mean posterior, A' = I. No feature preprocessing (see FEATNORM).
@@ -30,7 +30,7 @@ RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}
 FEATNORM = {}                                          # raw features everywhere (cora_fn / citeseer_fn cells)
-FIXED_WD = {'arxiv': 0.0}                              # GCond recipe: wd 5e-4 everywhere except arxiv (0)
+WD = 5e-4                                              # weight decay fixed (GCN/GCond default); only dropout is selected on val
 GROUPS = {'A': [('arxiv', r) for r in RATIOS['arxiv']], 'B': [('reddit', r) for r in RATIOS['reddit']],
           'C': [(d, r) for d in ['cora', 'citeseer', 'flickr'] for r in RATIOS[d]]}
 for i, r in enumerate(RATIOS['arxiv'], 1): GROUPS[f'A{i}'] = [('arxiv', r)]
@@ -39,7 +39,7 @@ for i, d in enumerate(['cora', 'citeseer', 'flickr'], 1): GROUPS[f'C{i}'] = [(d,
 CELLS = GROUPS[SESSION]
 GAMMAS = [1e-4, 1e-3, 1e-2, 1e-1]
 MUS    = [0.2, 0.5, 1.0, 2.0, 5.0]
-DOWN1  = '0,0.1,0.3,0.5,0.7,0.9;0,1e-4,5e-4,2e-3'
+DOWN1  = f'0,0.1,0.3,0.5,0.7,0.9;{WD:g}'
 REP1   = lambda ds: 1 if ds in ('arxiv', 'reddit') else 2      # stage-1 repeats (val sets: 30k / 24k vs 500)
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+): ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
@@ -80,27 +80,22 @@ def pick(ds, r, fixed=False):
     """val-best stage-1 row for a cell; fixed=True restricts to the GCond recipe."""
     s1 = load(); s1 = s1[(s1.stage == 'stage1') & (s1.ds == ds) & (s1.ratio == r)]
     if fixed:
-        s1 = s1[(s1['drop'] == 0.5) & (s1.wd == FIXED_WD.get(ds, 5e-4))]
+        s1 = s1[(s1['drop'] == 0.5) & (s1.wd == WD)]
     return None if not len(s1) else s1.sort_values('val', ascending=False).iloc[0]
 
-# ============ Cell 2: stage 1 - gamma x mu grid, 24 recipes (20 condensations per cell; done() skips logged ones) =============
+# ============ Cell 2: stage 1 - gamma x mu grid x 6 dropouts (20 condensations per cell; done() skips logged ones) =============
 for ds, r in CELLS:
     for gamma, mu in itertools.product(GAMMAS, MUS):
         if not done(ds, r, gamma, mu, 'stage1'):
             run(ds, r, gamma, mu, DOWN1, REP1(ds), 'stage1')
 
-# ============ Cell 2c (optional): wd upper extension - at the val-best (gamma, mu), wd = 5e-3 x 6 dropouts =============
-DOWN_WD = '0,0.1,0.3,0.5,0.7,0.9;5e-3'
-for ds, r in CELLS:
-    b = pick(ds, r)
-    if b is not None and b.wd == 2e-3 and not done(ds, r, b.gamma, b.mu, 'stage1', DOWN_WD):
-        run(ds, r, b.gamma, b.mu, DOWN_WD, REP1(ds), 'stage1')
+# ============ Cell 2b: selected config per cell (edge = at a grid boundary) =============
 print('##### selected config per cell (edge = at a grid boundary)')
 for ds, r in CELLS:
     b = pick(ds, r)
     if b is not None:
         edge = ' '.join(k for k, v in [('gamma', b.gamma in (min(GAMMAS), max(GAMMAS))), ('mu', b.mu in (min(MUS), max(MUS))),
-                                       ('do', b['drop'] in (0.0, 0.9)), ('wd', b.wd in (0.0, 5e-3))] if v)
+                                       ('do', b['drop'] in (0.0, 0.9)), ('wd', False)] if v)
         print(f"{ds} {r:g}: gamma {b.gamma:g} mu {b.mu:g} do {b['drop']:g} wd {b.wd:g}  val {b.val:.2f} test {b.test:.2f}  edge: {edge or '-'}")
 
 # ============ Cell 3: stage 2 - repeat 10 at the val-best config and at the fixed recipe =============
@@ -112,7 +107,7 @@ for ds, r in CELLS:
             run(ds, r, b.gamma, b.mu, down, 10, 'final')
     f = pick(ds, r, fixed=True)
     if f is not None:
-        down = f"0.5;{FIXED_WD.get(ds, 5e-4):g}"
+        down = f"0.5;{WD:g}"
         if not done(ds, r, f.gamma, f.mu, 'fixed', down):
             run(ds, r, f.gamma, f.mu, down, 10, 'fixed')
 
@@ -129,7 +124,7 @@ print('\n##### stage 1: val-selected test per (ds, ratio) x gamma')
 bg = s1.sort_values('val', ascending=False).groupby(['ds', 'ratio', 'gamma']).head(1)
 print(bg.pivot_table(index=['ds', 'ratio'], columns='gamma', values='test').round(2).to_string())
 for stage, title in [('final', 'MAIN TABLE - Ours (val-selected recipe), repeat 10'),
-                     ('fixed', 'Ours (fixed GCond/ClustGDD recipe: dropout 0.5, wd 5e-4 / arxiv 0), repeat 10')]:
+                     ('fixed', 'Ours (fixed GCond/ClustGDD recipe: dropout 0.5, wd 5e-4), repeat 10')]:
     s = df[df.stage == stage]
     if not len(s):
         continue
