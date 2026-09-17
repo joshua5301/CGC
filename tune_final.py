@@ -49,10 +49,14 @@ GAMMAS = [1e-4, 1e-3, 1e-2]
 FNS    = {'cora': [0, 1], 'citeseer': [0, 1], 'flickr': [0, 1]}   # feature normalisation axis; others: 0 (not implemented)
 WDS    = [5e-4, 5e-3]
 DOS    = [0, 0.1, 0.3, 0.5, 0.7, 0.9]
-DOWN1  = ','.join(f'{d:g}' for d in DOS) + ';' + ','.join(f'{w:g}' for w in WDS)
+LRS    = {}                          # e.g. {'cora': [1e-3, 1e-2], 'citeseer': [1e-3, 1e-2]}; empty = lr fixed at LR0
+def down_of(ds):
+    g = ','.join(f'{d:g}' for d in DOS) + ';' + ','.join(f'{w:g}' for w in WDS)
+    return g + (';' + ','.join(f'{l:g}' for l in LRS[ds]) if ds in LRS else '')
 REP1   = 3
 FIXED  = (0.5, 5e-4)                 # GCond / ClustGDD downstream recipe (dropout, wd)
-PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+): ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
+PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+)(?: lr=([\d.e-]+))?: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
+LR0 = 0.01                            # --lr in BASE; log rows without an lr field use this
 KEYS = ['space', 'basis', 'gamma', 'mu', 'fn']
 
 def load():
@@ -94,13 +98,14 @@ def run(ds, r, cfg, down, repeat, stage):
     ex = re.search(r'expert:.*', out); ex = ex[0] if ex else ''
     cd = re.search(r'cell diag.*', out); cd = cd[0] if cd else ''
     with open(LOG, 'a') as f:
-        for do_, wd_, te, sd, va in rows:
+        for do_, wd_, lr_, te, sd, va in rows:
             f.write(json.dumps(dict(ds=ds, ratio=r, space=space, basis=basis, gamma=gamma, mu=mu, fn=fn,
-                                    drop=float(do_), wd=float(wd_), repeat=repeat, stage=stage, down=down,
+                                    drop=float(do_), wd=float(wd_), lr=float(lr_) if lr_ else LR0,
+                                    repeat=repeat, stage=stage, down=down,
                                     test=float(te), std=float(sd), val=float(va), expert=ex, diag=cd)) + '\n')
-    best = max(rows, key=lambda x: float(x[4]))
-    print(f"{ds:8s} r={r:<7g} {space:4s} b={basis:<4d} g={gamma:<5g} mu={mu:<3g} fn={fn} [{stage}]  val {best[4]} "
-          f"(do={best[0]} wd={best[1]}) test {best[2]}±{best[3]}  ({round(time.time() - t)}s)  {ex[:45]}")
+    best = max(rows, key=lambda x: float(x[5]))
+    print(f"{ds:8s} r={r:<7g} {space:4s} b={basis:<4d} g={gamma:<5g} mu={mu:<3g} fn={fn} [{stage}]  val {best[5]} "
+          f"(do={best[0]} wd={best[1]}" + (f" lr={best[2]}" if best[2] else '') + f") test {best[3]}±{best[4]}  ({round(time.time() - t)}s)  {ex[:45]}")
 
 def pick(ds, r, fixed=False):
     """val-best stage-1 row of a cell; fixed=True restricts to the GCond recipe."""
@@ -115,13 +120,13 @@ def pick(ds, r, fixed=False):
 cfg_of = lambda b: (b.space, int(b.basis), float(b.gamma), float(b.mu), int(b.fn))
 grid_of = lambda ds: list(itertools.product(SPACES, BASES, GAMMAS, MUS, FNS.get(ds, [0])))
 print(f'{SESSION}: cells {CELLS}, ' + ', '.join(f'{ds} {len(grid_of(ds))}' for ds in dict.fromkeys(d for d, _ in CELLS))
-      + f' condensations per cell, {len(DOS) * len(WDS)} recipes x repeat {REP1} each')
+      + f' condensations per cell, {len(DOS) * len(WDS)} recipes' + (f' x lr {LRS}' if LRS else '') + f' x repeat {REP1} each')
 
 # ============ Cell 2: stage 1 - full grid (36 / 72 condensations per cell; done() skips logged ones) =============
 for ds, r in CELLS:
     for cfg in grid_of(ds):
         if not done(ds, r, cfg, 'stage1'):
-            run(ds, r, cfg, DOWN1, REP1, 'stage1')
+            run(ds, r, cfg, down_of(ds), REP1, 'stage1')
     b = pick(ds, r)
     print(f"--> {ds} {r:g}: {cfg_of(b)} do {b['drop']:g} wd {b.wd:g}  val {b.val:.2f} test {b.test:.2f}")
 
@@ -129,7 +134,7 @@ for ds, r in CELLS:
 for ds, r in CELLS:
     b = pick(ds, r)
     if b is not None:
-        down = f"{b['drop']:g};{b.wd:g}"
+        down = f"{b['drop']:g};{b.wd:g}" + (f";{b.lr:g}" if 'lr' in b and b.lr != LR0 else '')
         if not done(ds, r, cfg_of(b), 'final', down):
             run(ds, r, cfg_of(b), down, 10, 'final')
     f = pick(ds, r, fixed=True)
@@ -144,7 +149,7 @@ s1 = df[df.stage == 'stage1']
 print('##### stage 1: val-selected config per (ds, ratio)   [repeat 3]')
 b1 = s1.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1)
 print(b1[['ds', 'ratio'] + KEYS + ['drop', 'wd', 'val', 'test', 'std']].sort_values(['ds', 'ratio']).to_string(index=False))
-for ax in KEYS + ['drop', 'wd']:
+for ax in KEYS + ['drop', 'wd', 'lr']:
     bx = s1.sort_values('val', ascending=False).groupby(['ds', 'ratio', ax]).head(1)
     print(f'\n##### stage 1: val-selected test per (ds, ratio) x {ax}')
     print(bx.pivot_table(index=['ds', 'ratio'], columns=ax, values='test').round(2).to_string())
@@ -155,7 +160,7 @@ for stage, title in [('final', 'MAIN TABLE - Ours (val-selected), repeat 10'),
     if not len(s):
         continue
     s = s.assign(cell=s.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f}", axis=1),
-                 cfg=s.apply(lambda x: f"{x['space']} b={x['basis']} g={x['gamma']:g} mu={x['mu']:g} fn={x['fn']} do={x['drop']:g} wd={x['wd']:g}", axis=1))
+                 cfg=s.apply(lambda x: f"{x['space']} b={x['basis']} g={x['gamma']:g} mu={x['mu']:g} fn={x['fn']} do={x['drop']:g} wd={x['wd']:g} lr={x.get('lr', LR0):g}", axis=1))
     print(f'\n##### {title}')
     print(s.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
     print(s.pivot_table(index='ds', columns='ratio', values='cfg', aggfunc='first').to_string())
