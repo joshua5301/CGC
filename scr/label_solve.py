@@ -1091,9 +1091,20 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0, pre=None):
+                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0):
+    """temp / ent: per-node sharpening of the teacher posteriors BEFORE cell averaging (gamma sets the teacher's
+    accuracy; a strongly regularised teacher has small logits, i.e. flat posteriors, which starves the student).
+    ent > 0: temperature matched so the mean posterior entropy is ent nats; else divide logits by temp."""
     pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
     P = F.softmax(pred(pool).double(), dim=1)
+    ent0, T = mean_entropy(P), 1.0
+    if ent > 0:
+        P, T = match_entropy(P, ent)
+    elif temp != 1.0:
+        P, T = F.softmax(pred(pool).double() / temp, dim=1), temp
+    if T != 1.0:
+        print(f'teacher[kernel]: posterior entropy {ent0:.3f} -> {mean_entropy(P):.3f} nats at T={T:.3f} '
+              f'(uniform = {math.log(P.shape[1]):.3f})')
     Y = _pool_means(P, assign.to(P.device), n_cl, sel)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),
            'kfun': pred, 'A': A}
