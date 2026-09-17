@@ -48,7 +48,7 @@ MUS    = [0.3, 1.0, 3.0]
 GAMMAS = [1e-4, 1e-3, 1e-2]
 FNS    = {'cora': [0, 1], 'citeseer': [0, 1], 'flickr': [0, 1]}   # feature normalisation axis; others: 0 (not implemented)
 WDS    = [5e-4, 5e-3]
-DOS    = [0, 0.1, 0.3, 0.5, 0.8]
+DOS    = [0, 0.1, 0.3, 0.5, 0.7, 0.9]
 DOWN1  = ','.join(f'{d:g}' for d in DOS) + ';' + ','.join(f'{w:g}' for w in WDS)
 REP1   = 3
 FIXED  = (0.5, 5e-4)                 # GCond / ClustGDD downstream recipe (dropout, wd)
@@ -56,7 +56,18 @@ PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+): ([\d.]+) \+- ([\d.]+)\s+
 KEYS = ['space', 'basis', 'gamma', 'mu', 'fn']
 
 def load():
-    recs = [json.loads(l) for f in glob.glob(f'{LOGDIR}/{TAG}_*.jsonl') for l in open(f)]
+    """All final3_*.jsonl rows in LOGDIR that carry this protocol's keys (rows from other protocols are skipped)."""
+    recs, skipped = [], {}
+    for f in glob.glob(f'{LOGDIR}/{TAG}_*.jsonl'):
+        for l in open(f):
+            d = json.loads(l)
+            if all(k in d for k in KEYS):
+                recs.append(d)
+            else:
+                skipped[f] = skipped.get(f, 0) + 1
+    if skipped and not getattr(load, 'warned', False):
+        print("load(): skipped rows without this protocol keys:", {os.path.basename(k): v for k, v in skipped.items()})
+        load.warned = True
     return pd.DataFrame(recs)
 
 def done(ds, r, cfg, stage, down=None):
