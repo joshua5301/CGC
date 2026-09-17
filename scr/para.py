@@ -47,7 +47,8 @@ def para():
     parser.add_argument('--landmark', type=str, default='cgc',
                         help='cgc, class_kmeans, kmeans, random, random_split, easy, hard, '
                              'herding, kcenter (coreset + Voronoi cells), '
-                             'metis, vng (structural coarsening cells)')
+                             'metis, vng (structural coarsening cells), '
+                             'pclass_kmeans (class-wise budget by teacher argmax class, no label leakage)')
     parser.add_argument('--cand_mult', type=float, default=4.0,
                         help='candidate over-generation factor for --landmark easy/hard')
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, kernel_mean (honest-dual kernel logistic teacher, gamma only), probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), mlp_mean (MLP-on-H teacher), cs, cs_loss')

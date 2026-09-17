@@ -53,7 +53,7 @@ else:
         print(f'cluster space[{args.cluster_feat}]: {Hc.shape[1]}d '
               f'({len(pool_d)} depths' + (f', high-pass w={args.hp_w:g}' if args.cluster_feat == 'multi' else '') + ')')
     P0 = None
-    if args.lam_p > 0 or args.bregman > 0 or args.splitmerge > 0:
+    if args.lam_p > 0 or args.bregman > 0 or args.splitmerge > 0 or args.landmark == 'pclass_kmeans':
         pf0 = label_feats(args.label_feat, pool_d)
         HL0 = label_feats(args.label_feat, depths)[data.train_mask]
         YL0 = F.one_hot(data.y[data.train_mask], args.num_class).to(pf0.dtype)

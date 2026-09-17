@@ -577,6 +577,22 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
             m = (y_pool == cls)
             assign[m.cpu()] = _assign(Hw[m], args.budget_cla[cls], args.clustering) + k
             k += int(args.budget_cla[cls])
+    elif args.landmark == 'pclass_kmeans':
+        # class-wise budget (GCond-style, proportional to the training label counts) without label leakage:
+        # nodes are grouped by the teacher's argmax class, then clustered within each group
+        if P is None:
+            raise SystemExit('--landmark pclass_kmeans needs teacher posteriors (set --bregman > 0)')
+        pc = P.argmax(1).cpu()
+        assign, k, sizes = torch.zeros(len(H_pool), dtype=torch.long), 0, []
+        for cls in range(args.num_class):
+            m = (pc == cls)
+            kc = int(min(max(int(args.budget_cla[cls]), 1), int(m.sum())))
+            sizes.append((int(m.sum()), kc))
+            if kc == 0:
+                continue
+            assign[m] = _assign(Hw[m.to(Hw.device)], kc, args.clustering) + k
+            k += kc
+        print(f'pclass_kmeans: {k} cells; (predicted-class size, cells) = {sizes}')
     elif args.landmark in ('metis', 'vng'):
         if graph is None:
             raise SystemExit(f'--landmark {args.landmark} needs the pool graph')
