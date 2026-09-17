@@ -1061,7 +1061,7 @@ def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000):
     return _chunked(lambda x: (_kernel(x.double(), B, kind, d, bw) @ T).float(), H, chunk)
 
 
-def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0, chunk=8192):
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0, chunk=8192, loss='ce'):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
                    the mean dropped) and penalty gamma * ||V||^2 = gamma * ||f(B)||^2. This is the
@@ -1081,7 +1081,17 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
         keep = lam > 1e-3 * lam.mean()
         T = U[:, keep] @ torch.diag(1.0 / lam[keep]) @ U[:, keep].T       # K_BB^{+}
     feat = lambda X: _chunked(lambda x: _kernel(x.double(), B, kind, d, bw) @ T, X, chunk)
-    W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps)
+    if loss == 'mse':
+        # kernel ridge regression on one-hot targets: closed form, no iterations. With the NNGP kernel this is
+        # exactly the infinite-width network trained with MSE (Lee et al. 2019). Same gamma scaling as fit_probe_W.
+        Psi = feat(H_L)
+        m, dd = Psi.shape
+        g = gamma * Psi.norm() ** 2 / (m * dd)
+        G = Psi.T @ Psi
+        W = torch.linalg.solve(G + g * m * torch.eye(dd, dtype=Psi.dtype, device=Psi.device), Psi.T @ Y_L)
+        loss, gnorm = float(((Psi @ W - Y_L) ** 2).sum(1).mean()), 0.0
+    else:
+        W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps)
     Wf, Bf, Tf, bwf = W.float(), B.float(), T.float(), (None if bw is None else float(bw))
     pred = lambda x: _chunked(lambda z: (_kernel(z.float().to(Bf.device), Bf, kind, d, bwf) @ Tf) @ Wf, x, chunk)
     # double-precision twin for input-gradient use (float32 turns the 1-1e-12 clamp into 1.0 and acos' blows up
@@ -1091,11 +1101,11 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0):
+                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce'):
     """temp / ent: per-node sharpening of the teacher posteriors BEFORE cell averaging (gamma sets the teacher's
     accuracy; a strongly regularised teacher has small logits, i.e. flat posteriors, which starves the student).
     ent > 0: temperature matched so the mean posterior entropy is ent nats; else divide logits by temp."""
-    pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
+    pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult, loss=loss)
     P = F.softmax(pred(pool).double(), dim=1)
     ent0, T = mean_entropy(P), 1.0
     if ent > 0:

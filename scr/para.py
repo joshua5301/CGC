@@ -158,6 +158,9 @@ def para():
     parser.add_argument('--cs_scale', type=float, default=1.0)
     parser.add_argument('--teacher', type=str, default='none', help='none, probe, ridge')
     parser.add_argument('--teacher_temp', type=float, default=1.0)
+    parser.add_argument('--teacher_loss', type=str, default='ce', choices=['ce', 'mse'],
+                        help='kernel teacher fit: ce = kernel logistic regression (LBFGS), mse = kernel ridge regression '
+                             '(closed form; outputs are scores, so use --teacher_temp / --teacher_ent to turn them into posteriors)')
     parser.add_argument('--teacher_ent', type=float, default=0.0,
                         help='>0: temperature-match the teacher posteriors (kernel or GCN) to this mean entropy (nats) before cell averaging')
     parser.add_argument('--teacher_gamma', type=float, default=1e-2)
