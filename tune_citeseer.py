@@ -1,7 +1,7 @@
 # ============ Cell 1: common (citeseer final run; three sessions: SESSION = 'C1' / 'C2' / 'C3' = 0.9 / 1.8 / 3.6%) =============
 # citeseer needs a much stronger teacher regularisation than the large graphs (gamma 10-30) and, because such a teacher
 # has flat posteriors, a per-node temperature T on the posteriors before cell averaging. Grid per cell (120 condensations):
-#   kernel {erf, relu1} x gamma {1e-2, 1e-1, 1, 10, 30} x T {1, 0.5, 0.25} x feat_norm {0, 1} x mu {0.3, 1}
+#   erf kernel x gamma {1e-2, 1e-1, 1, 10, 30} x T {1, 0.5, 0.25} x feat_norm {0, 1} x mu {0.3, 1}
 #   space raw, basis 3000 (= all nodes), l1 k-medians, depth 2; each run evaluates wd {5e-4, 5e-3} x 6 dropouts, repeat 3.
 # Stage 2: val-best config at repeat 10 (main table) + fixed recipe (dropout 0.5, wd 5e-4) at its val-best config, repeat 10.
 SESSION = 'C1'
@@ -22,7 +22,7 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
         "--label_mode kernel_mean --kernel_prior rkhs --cluster_obj l1 --cluster_feat last --expert_basis 3000 --conv_depth 2 "
         "--no_hyperpara 1 --lr 0.01 --epoch 1000 --dropout 0.5 --weight_decay 5e-4 --dataset_name citeseer")
 RATIO = {'C1': 0.009, 'C2': 0.018, 'C3': 0.036}[SESSION]
-KERNELS = ['erf', 'relu1']
+KERNELS = ['erf']                     # relu1 collapses at gamma >= 30 (teacher 68.6); erf stays at 72 up to gamma 100
 GAMMAS  = [1e-2, 1e-1, 1.0, 10.0, 30.0]
 TEMPS   = [1.0, 0.5, 0.25]
 FNS     = [0, 1]
