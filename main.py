@@ -66,11 +66,15 @@ else:
                 basis0 = pf0[torch.randperm(len(pf0), generator=gz)[:args.expert_basis].to(pf0.device)]
             early_teacher = kernel_teacher(HL0, basis0, YL0, args.gamma, args.ce_steps, args.label_kernel,
                                            args.kernel_prior, args.kernel_bw, loss=args.teacher_loss, tol=args.probe_tol) + (basis0,)
-            P0 = F.softmax(early_teacher[0](pf0).double(), dim=1)
+            P0 = F.softmax(early_teacher[0](pf0).double() / args.teacher_temp, dim=1)
             print(f'refine teacher: kernel ({args.label_kernel}, basis {len(basis0)})')
         else:
             W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps, tol=args.probe_tol)[0]
-            P0 = F.softmax(pf0.double() @ W0c, dim=1)
+            # same per-node temperature as the label teacher, otherwise a strongly regularised probe
+            # (flat posteriors) silently switches the KL refinement off
+            P0 = F.softmax(pf0.double() @ W0c / args.teacher_temp, dim=1)
+            if args.teacher_ent > 0:
+                P0 = match_entropy(P0, args.teacher_ent)[0]
         if args.lam_p > 0:
             Hc = posterior_feats(pf0 if Hc is None else Hc, P0, args.lam_p)
             print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
