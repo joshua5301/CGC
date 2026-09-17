@@ -180,6 +180,17 @@ else:
             tm.eval()
             with torch.no_grad():
                 Pfull = tm(data.to(args.device)).exp()
+            # the GCN teacher has no gamma; control its label sharpness per node (before cell averaging) instead:
+            # --teacher_ent e > 0 finds the temperature whose mean posterior entropy is e nats, else --teacher_temp T
+            ent_raw = mean_entropy(Pfull)
+            if args.teacher_ent > 0:
+                Pfull, T_ = match_entropy(Pfull, args.teacher_ent)
+            elif args.teacher_temp != 1.0:
+                Pfull, T_ = F.softmax(Pfull.clamp_min(1e-12).log() / args.teacher_temp, dim=1), args.teacher_temp
+            else:
+                T_ = 1.0
+            print(f'teacher[gcn]: posterior entropy {ent_raw:.3f} -> {mean_entropy(Pfull):.3f} nats at T={T_:.3f} '
+                  f'(uniform = {np.log(args.num_class):.3f})')
             pm = pool_mask(args, data, len(data.y), args.device).to(Pfull.device)
             yd, tp = data.y.to(Pfull.device), Pfull.argmax(1)
             ta = lambda m: (100 * (tp[m.to(Pfull.device)] == yd[m.to(Pfull.device)]).double().mean()).item()
