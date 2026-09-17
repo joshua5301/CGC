@@ -79,6 +79,9 @@ def para():
     parser.add_argument('--self_full', type=int, default=0,
                         help='control for --self_rounds: retrain on the FULL graph with the soft pseudo-labels '
                              '(no condensation) instead of on the condensed set')
+    parser.add_argument('--label_hard', type=int, default=0, help='1: replace the cell-mean soft label by its argmax one-hot')
+    parser.add_argument('--label_temp', type=float, default=1.0,
+                        help='temperature on the cell-mean posterior (p^(1/T) renormalised); 1 = as is, <1 sharper')
     parser.add_argument('--label_mc', type=int, default=0,
                         help='M>0: cell label = teacher averaged over M Gaussian draws N(x_j, diag s_j^2) per cell')
     parser.add_argument('--label_mc_scale', type=float, default=1.0, help='multiplier on the per-cell std for --label_mc')

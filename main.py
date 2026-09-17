@@ -222,6 +222,16 @@ else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
                                             args.target_maxp, args.maxp_iters, pf, assign,
                                             sel)
+        if args.label_temp != 1.0 or args.label_hard:
+            # label sharpening ablation: temperature T on the cell-mean posterior (T -> 0 = argmax one-hot)
+            ent0 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()
+            if args.label_hard:
+                Y = F.one_hot(Y.argmax(1), Y.shape[1]).to(Y.dtype)
+            else:
+                Y = F.softmax(Y.clamp_min(1e-12).log() / args.label_temp, dim=1)
+            ent1 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()
+            print(f'label sharpen: ' + ('argmax' if args.label_hard else f'T={args.label_temp:g}') +
+                  f'  mean entropy {ent0:.3f} -> {ent1:.3f}  maxp {Y.max(1)[0].mean():.3f}')
         label_cond = Y.float()
         if 'W' in ctx or 'dual' in ctx or 'kfun' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx
