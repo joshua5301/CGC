@@ -993,6 +993,9 @@ def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
     opt.step(closure)
     with torch.enable_grad():
         loss = closure()
+    st = opt.state[opt._params[0]]
+    print(f"probe: lbfgs {st.get('n_iter', -1)} iters / {steps} max ({st.get('func_evals', -1)} evals)  "
+          f"loss {loss.item():.5f}  gnorm {W.grad.norm().item():.2e}")
     return W.detach(), loss.item(), W.grad.norm().item()
 
 
