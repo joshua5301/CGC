@@ -86,10 +86,11 @@ def ratio_transfer(args):
 def conv_graph_multi(args, data):
     if args.kernel == "gcn":
         adj_norm = normalize_adj_sparse(data).to(data.x.device)
-        H0 = data.x
-        H1 = torch.spmm(adj_norm, H0)
-        H2 = torch.spmm(adj_norm, H1)
-        return H0, H1, H2
+        # (X, AX, A^2X, ...) up to conv_depth (>= 2 so downstream code that reads depths[2] keeps working)
+        Hs = [data.x]
+        for _ in range(max(2, int(getattr(args, 'conv_depth', 2)))):
+            Hs.append(torch.spmm(adj_norm, Hs[-1]))
+        return tuple(Hs)
 
 
 def normalize_adj_sparse(data):
