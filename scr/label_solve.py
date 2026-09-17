@@ -1075,8 +1075,8 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0):
-    pred, A, loss, gnorm = kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
+                        bw_mult=1.0, pre=None):
+    pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult)
     P = F.softmax(pred(pool).double(), dim=1)
     Y = _pool_means(P, assign.to(P.device), n_cl, sel)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),

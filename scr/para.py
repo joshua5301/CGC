@@ -80,6 +80,9 @@ def para():
                         help='control for --self_rounds: retrain on the FULL graph with the soft pseudo-labels '
                              '(no condensation) instead of on the condensed set')
     parser.add_argument('--label_hard', type=int, default=0, help='1: replace the cell-mean soft label by its argmax one-hot')
+    parser.add_argument('--refine_teacher', type=str, default='probe', choices=['probe', 'kernel'],
+                        help='posterior used by the KL refinement (--bregman): linear probe on H (default, as in all runs so far) '
+                             'or the same kernel teacher that produces the labels (fit once, shared)')
     parser.add_argument('--label_temp', type=float, default=1.0,
                         help='temperature on the cell-mean posterior (p^(1/T) renormalised); 1 = as is, <1 sharper')
     parser.add_argument('--label_mc', type=int, default=0,
