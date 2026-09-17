@@ -139,6 +139,11 @@ for ds, r in CELLS:
         down = f"{FIXED[0]:g};{FIXED[1]:g}"
         if not done(ds, r, cfg_of(f), 'fixed', down):
             run(ds, r, cfg_of(f), down, 10, 'fixed')
+    if b is not None:                                   # ablation: no KL refinement (mu = 0) at the val-best config
+        cfg0 = cfg_of(b)[:4] + (0.0, cfg_of(b)[5])
+        down = f"{b['drop']:g};{b.wd:g}"
+        if not done(ds, r, cfg0, 'mu0', down):
+            run(ds, r, cfg0, down, 10, 'mu0')
 
 # ============ Cell 4: tables (run where all final5_*.jsonl files are present) =============
 df = load(); assert len(df), 'no logs found in LOGDIR'
@@ -165,6 +170,18 @@ for stage, title in [('final', 'MAIN TABLE - Ours (val-selected), repeat 10'),
     print(f'\n##### {title}')
     print(s.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
     print(s.pivot_table(index='ds', columns='ratio', values='cfg', aggfunc='first').to_string())
+m0 = top('mu0')
+if len(m0):
+    m0 = m0.assign(cell=m0.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f}", axis=1))
+    print('\n##### ablation: mu = 0 (no KL refinement) at the val-best config, repeat 10')
+    print(m0.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
+d0 = s1[(s1.kernel == 'erf') & (s1.space == 'last') & (s1.fn == 0) & (s1.temp == 1.0)]
+d0 = d0[((d0.ds.isin(['arxiv', 'reddit'])) & (d0.gamma == 1e-3) & (d0.mu == 1.0)) | ((~d0.ds.isin(['arxiv', 'reddit'])) & (d0.gamma == 1.0) & (d0.mu == 0.3))]
+if len(d0):
+    d0 = d0.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1)
+    d0 = d0.assign(cell=d0.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f} (do={x['drop']:g} wd={x['wd']:g})", axis=1))
+    print('\n##### default condensation config (erf, raw, fn 0, T 1; large: gamma 1e-3 mu 1, small: gamma 1 mu 0.3), recipe val-selected, stage-1 repeats')
+    print(d0.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
 fin, fix = top('final'), top('fixed')
 if len(fin) and len(fix):
     d = (fin.set_index(['ds', 'ratio']).test - fix.set_index(['ds', 'ratio']).test).round(2)
