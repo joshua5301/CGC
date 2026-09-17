@@ -97,12 +97,13 @@ def run(ds, r, cfg, down, repeat, stage):
         print('FAIL', ds, r, cfg, stage, '\n', out[-1500:]); return
     ex = re.search(r'expert:.*', out); ex = ex[0] if ex else ''
     cd = re.search(r'cell diag.*', out); cd = cd[0] if cd else ''
+    ct = re.search(r'Condensation time: ([0-9.]+)', out); ct = float(ct[1]) if ct else float('nan')
     with open(LOG, 'a') as f:
         for do_, wd_, lr_, te, sd, va in rows:
             f.write(json.dumps(dict(ds=ds, ratio=r, space=space, basis=basis, gamma=gamma, mu=mu, fn=fn,
                                     drop=float(do_), wd=float(wd_), lr=float(lr_) if lr_ else LR0,
                                     repeat=repeat, stage=stage, down=down,
-                                    test=float(te), std=float(sd), val=float(va), expert=ex, diag=cd)) + '\n')
+                                    test=float(te), std=float(sd), val=float(va), expert=ex, diag=cd, cond_s=ct)) + '\n')
     best = max(rows, key=lambda x: float(x[5]))
     print(f"{ds:8s} r={r:<7g} {space:4s} b={basis:<4d} g={gamma:<5g} mu={mu:<3g} fn={fn} [{stage}]  val {best[5]} "
           f"(do={best[0]} wd={best[1]}" + (f" lr={best[2]}" if best[2] else '') + f") test {best[3]}±{best[4]}  ({round(time.time() - t)}s)  {ex[:45]}")
@@ -164,6 +165,10 @@ for stage, title in [('final', 'MAIN TABLE - Ours (val-selected), repeat 10'),
     print(f'\n##### {title}')
     print(s.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
     print(s.pivot_table(index='ds', columns='ratio', values='cfg', aggfunc='first').to_string())
+if 'cond_s' in df.columns:
+    ct = df[df.stage == 'stage1'].drop_duplicates(['ds', 'ratio'] + KEYS)
+    print('\n##### condensation time [s], median over gamma/mu/fn: rows ds x ratio, columns space x basis')
+    print(ct.pivot_table(index=['ds', 'ratio'], columns=['space', 'basis'], values='cond_s', aggfunc='median').round(1).to_string())
 fin, fix = top('final'), top('fixed')
 if len(fin) and len(fix):
     d = (fin.set_index(['ds', 'ratio']).test - fix.set_index(['ds', 'ratio']).test).round(2)
