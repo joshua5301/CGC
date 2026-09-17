@@ -65,11 +65,11 @@ else:
                 gz = torch.Generator(); gz.manual_seed(args.seed)
                 basis0 = pf0[torch.randperm(len(pf0), generator=gz)[:args.expert_basis].to(pf0.device)]
             early_teacher = kernel_teacher(HL0, basis0, YL0, args.gamma, args.ce_steps, args.label_kernel,
-                                           args.kernel_prior, args.kernel_bw, loss=args.teacher_loss) + (basis0,)
+                                           args.kernel_prior, args.kernel_bw, loss=args.teacher_loss, tol=args.probe_tol) + (basis0,)
             P0 = F.softmax(early_teacher[0](pf0).double(), dim=1)
             print(f'refine teacher: kernel ({args.label_kernel}, basis {len(basis0)})')
         else:
-            W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps)[0]
+            W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps, tol=args.probe_tol)[0]
             P0 = F.softmax(pf0.double() @ W0c, dim=1)
         if args.lam_p > 0:
             Hc = posterior_feats(pf0 if Hc is None else Hc, P0, args.lam_p)
@@ -224,7 +224,7 @@ else:
             Y, ctx = solve_labels_kernel(H_fit, basis, T_fit, args.gamma, args.ce_steps,
                                          args.label_kernel, pf, assign, len(hl), sel,
                                          args.kernel_prior, args.kernel_bw, pre=None if pre is None else pre[:4],
-                                         temp=args.teacher_temp, ent=args.teacher_ent, loss=args.teacher_loss)
+                                         temp=args.teacher_temp, ent=args.teacher_ent, loss=args.teacher_loss, tol=args.probe_tol)
             ctx['basis'] = basis
         elif args.label_mode.startswith('logistic'):
             basis, n_cl = hl, 0

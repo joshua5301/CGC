@@ -975,14 +975,16 @@ def dual_predictor(Hp, dual):
     return lambda x: _kernel(x.float(), Hpf, kind, d, bwf) @ RY
 
 
-def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None):
+def fit_probe_W(H_L, Y_L, gamma, steps=200, init=None, tol=1e-10):
     H_L, Y_L = H_L.double(), Y_L.double()
     m, d = H_L.shape
     g = gamma * H_L.norm() ** 2 / (m * d)
     W = (init.clone() if init is not None else
          torch.zeros(d, Y_L.shape[1], dtype=H_L.dtype, device=H_L.device)).requires_grad_(True)
-    opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=1e-10,
-                            tolerance_change=1e-14, line_search_fn='strong_wolfe')
+    # tol: gradient tolerance (tolerance_change = tol^1.4 ~ 1e-14 at the legacy 1e-10, 1e-9 at torch's default 1e-7);
+    # the legacy value effectively disables convergence stopping, so steps acts as the iteration count
+    opt = torch.optim.LBFGS([W], max_iter=steps, history_size=20, tolerance_grad=tol,
+                            tolerance_change=tol ** 1.4, line_search_fn='strong_wolfe')
 
     def closure():
         opt.zero_grad()
@@ -1064,7 +1066,7 @@ def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000):
     return _chunked(lambda x: (_kernel(x.double(), B, kind, d, bw) @ T).float(), H, chunk)
 
 
-def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0, chunk=8192, loss='ce'):
+def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_mult=1.0, chunk=8192, loss='ce', tol=1e-10):
     """Kernel logistic regression on inducing points B with a single hyperparameter gamma.
     prior='value': features psi(h) = K(h,B) K_BB^{+}  (pseudo-inverse, eigenvalues below 1e-3 of
                    the mean dropped) and penalty gamma * ||V||^2 = gamma * ||f(B)||^2. This is the
@@ -1094,7 +1096,7 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
         W = torch.linalg.solve(G + g * m * torch.eye(dd, dtype=Psi.dtype, device=Psi.device), Psi.T @ Y_L)
         loss, gnorm = float(((Psi @ W - Y_L) ** 2).sum(1).mean()), 0.0
     else:
-        W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps)
+        W, loss, gnorm = fit_probe_W(feat(H_L), Y_L, gamma, steps, tol=tol)
     Wf, Bf, Tf, bwf = W.float(), B.float(), T.float(), (None if bw is None else float(bw))
     pred = lambda x: _chunked(lambda z: (_kernel(z.float().to(Bf.device), Bf, kind, d, bwf) @ Tf) @ Wf, x, chunk)
     # double-precision twin for input-gradient use (float32 turns the 1-1e-12 clamp into 1.0 and acos' blows up
@@ -1104,11 +1106,11 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce'):
+                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce', tol=1e-10):
     """temp / ent: per-node sharpening of the teacher posteriors BEFORE cell averaging (gamma sets the teacher's
     accuracy; a strongly regularised teacher has small logits, i.e. flat posteriors, which starves the student).
     ent > 0: temperature matched so the mean posterior entropy is ent nats; else divide logits by temp."""
-    pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult, loss=loss)
+    pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult, loss=loss, tol=tol)
     P = F.softmax(pred(pool).double(), dim=1)
     ent0, T = mean_entropy(P), 1.0
     if ent > 0:

@@ -53,6 +53,9 @@ def para():
                         help='candidate over-generation factor for --landmark easy/hard')
     parser.add_argument('--label_mode', type=str, default='onehot', help='onehot, closed, logistic, logistic_mean, kernel_mean (honest-dual kernel logistic teacher, gamma only), probe, probe_mean, ridge, ridge_mean, restricted, weighted, gcn_mean (full-graph GCN teacher), mlp_mean (MLP-on-H teacher), cs, cs_loss')
     parser.add_argument('--ce_steps', type=int, default=200)
+    parser.add_argument('--probe_tol', type=float, default=1e-10,
+                        help='LBFGS gradient tolerance for the kernel teacher / linear probe (1e-10 = legacy, effectively '
+                             'no convergence stop; 1e-6 stops when converged and --ce_steps becomes a cap)')
     parser.add_argument('--tangent', type=float, default=0.0,
                         help='first-order condensation: downstream perturbs each node along its '
                              'cell principal axis by N(0,(tangent*sigma)^2); 0 = off')
