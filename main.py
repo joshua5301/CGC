@@ -272,6 +272,24 @@ else:
                       + f'  -> re-clustered in its {Z.shape[1]}d logit space  label change {(Yn - Yc).abs().sum(1).mean():.4f}')
                 Yc = Yn
             Y = Yc
+        if args.set_head and pf is not None and assign is not None and ('P' in ctx or 'W' in ctx):
+            # group teacher: a Deep-Sets head on the fixed node teacher predicts each cell's class composition;
+            # trained on cell-like sets (k-means at several granularities + the actual cells) whose targets are the
+            # mean one-hot of their labelled members. Starts at the identity (= node-mean labels).
+            P_s = ctx['P'] if 'P' in ctx else F.softmax(pf.double() @ ctx['W'], dim=1)
+            Hw_s = pf if Hc is None else Hc
+            mults = [float(v) for v in args.set_mults.split(',') if v.strip()]
+            sets_s = make_sets(Hw_s, len(hl), mults, args.seed)
+            a_s = assign.to(P_s.device)
+            sets_s += [(a_s == j).nonzero().squeeze(1).cpu() for j in range(len(hl))]
+            pm_s = pool_mask(args, data, len(data.y), data.y.device)
+            va_pool = data.val_mask[pm_s] if hasattr(data, 'val_mask') else None
+            head_s = fit_set_head(P_s, pf, sets_s, y_pool, tr_pool, va_pool, args.set_rank, args.set_hidden,
+                                  args.set_steps, args.set_lr, args.set_wd, args.seed)
+            Y_s = apply_set_head(head_s, P_s, pf, assign, len(hl))
+            print(f'set head: labels moved  mean L1 {(Y_s - Y).abs().sum(1).mean():.4f}  argmax changed '
+                  f'{100 * (Y_s.argmax(1) != Y.argmax(1)).double().mean():.1f}% of cells  H {mean_entropy(Y):.3f} -> {mean_entropy(Y_s):.3f}')
+            Y = Y_s
         if args.label_temp != 1.0 or args.label_hard:
             # label sharpening ablation: temperature T on the cell-mean posterior (T -> 0 = argmax one-hot)
             ent0 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()

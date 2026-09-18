@@ -1337,3 +1337,126 @@ def solve_labels_probe(H_L, Hp, Y_L, gamma, steps=200, target_maxp=0.0, iters=12
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(torch.linalg.matrix_rank(Hp)),
            'gamma_rel': float(gamma), 'W': W}
     return read(W), ctx
+
+
+# ---------------------------------------------------------------- set-level label head (group teacher)
+def make_sets(Hw, n_cells, mults, seed):
+    """Cell-like training sets: k-means partitions of the pool at several granularities (mult x n_cells cells each).
+    Returns a list of LongTensors (member indices). Sets of different granularity overlap, which is intended."""
+    sets = []
+    for m in mults:
+        k = int(max(2, min(round(m * n_cells), len(Hw) // 2)))
+        torch.manual_seed(seed + k)
+        a = _assign(Hw, k, 'kmeans')
+        order = a.argsort()
+        bounds = torch.bincount(a, minlength=k).cumsum(0)
+        start = 0
+        for j in range(k):
+            idx = order[start:bounds[j]]
+            start = int(bounds[j])
+            if len(idx):
+                sets.append(idx)
+    return sets
+
+
+def _set_index(sets, device):
+    mem = torch.cat(sets).to(device)
+    sid = torch.cat([torch.full((len(x),), i, dtype=torch.long) for i, x in enumerate(sets)]).to(device)
+    return mem, sid, len(sets)
+
+
+def _set_mean(X, mem, sid, n_s):
+    out = torch.zeros(n_s, X.shape[1], dtype=X.dtype, device=X.device).index_add_(0, sid, X[mem])
+    cnt = torch.zeros(n_s, dtype=X.dtype, device=X.device).index_add_(0, sid, torch.ones(len(mem), dtype=X.dtype, device=X.device))
+    return out / cnt.clamp_min(1).unsqueeze(1), cnt
+
+
+def _set_label_mean(Y1, mask, mem, sid, n_s):
+    """mean one-hot of the LABELLED members (mask) of every set, and the labelled count"""
+    w = mask.to(Y1.device).to(Y1.dtype)
+    acc = torch.zeros(n_s, Y1.shape[1], dtype=Y1.dtype, device=Y1.device).index_add_(0, sid, (Y1 * w.unsqueeze(1))[mem])
+    n = torch.zeros(n_s, dtype=Y1.dtype, device=Y1.device).index_add_(0, sid, w[mem])
+    return acc / n.clamp_min(1).unsqueeze(1), n
+
+
+class SetHead(torch.nn.Module):
+    """Deep-Sets head on top of a FIXED node teacher: phi(h_t) = [f(h_t), log f(h_t), W h_t], mean pooling,
+    rho = residual MLP on the pooled statistics. Initialised to the identity (cell-mean posterior), so the
+    untrained head reproduces the node-mean labels exactly; training moves the cell composition, not the nodes."""
+
+    def __init__(self, C, d, rank, hidden):
+        super().__init__()
+        self.proj = torch.nn.Linear(d, rank, bias=False) if rank > 0 else None
+        self.mlp = torch.nn.Sequential(torch.nn.Linear(2 * C + rank, hidden), torch.nn.Tanh(),
+                                       torch.nn.Linear(hidden, C))
+        torch.nn.init.zeros_(self.mlp[2].weight); torch.nn.init.zeros_(self.mlp[2].bias)
+        self.log_t = torch.nn.Parameter(torch.zeros(()))          # global temperature of the residual logits
+
+    def pooled(self, P, H, mem, sid, n_s):
+        mP, cnt = _set_mean(P, mem, sid, n_s)
+        mL, _ = _set_mean(P.clamp_min(1e-12).log(), mem, sid, n_s)
+        z = [mP, mL]
+        if self.proj is not None:
+            z.append(_set_mean(self.proj(H.float()).double(), mem, sid, n_s)[0])
+        return mP, torch.cat(z, 1), cnt
+
+    def forward(self, P, H, mem, sid, n_s):
+        mP, z, cnt = self.pooled(P, H, mem, sid, n_s)
+        logits = mP.clamp_min(1e-12).log() + self.mlp(z.float()).double() * self.log_t.exp()
+        return F.softmax(logits, dim=1), cnt
+
+
+def fit_set_head(P, H, sets, y_tr, tr_mask, va_mask, rank, hidden, steps, lr, wd, seed, tag='set head'):
+    """Train the head on cell-like sets whose target is the mean one-hot of their LABELLED members (train labels);
+    early-stopped on the same sets scored against their validation-labelled members when any exist."""
+    device = P.device
+    C = P.shape[1]
+    mem, sid, n_s = _set_index(sets, device)
+    Y1 = F.one_hot(y_tr.to(device), C).double()
+    tgt_tr, n_tr = _set_label_mean(Y1, tr_mask, mem, sid, n_s)
+    keep_tr = n_tr > 0
+    has_va = va_mask is not None and bool(va_mask.any())
+    if has_va:
+        tgt_va, n_va = _set_label_mean(Y1, va_mask, mem, sid, n_s)
+        keep_va = n_va > 0
+    torch.manual_seed(seed)
+    head = SetHead(C, H.shape[1], rank, hidden).to(device)
+    opt = torch.optim.Adam(head.parameters(), lr=lr)
+    wce = lambda Q, T, w: -(w * (T * Q.clamp_min(1e-12).log()).sum(1)).sum() / w.sum()
+    best, best_state, best_it = float('inf'), {k: v.detach().clone() for k, v in head.state_dict().items()}, 0
+    with torch.no_grad():
+        Q0, _ = head(P, H, mem, sid, n_s)
+        l0_tr = wce(Q0[keep_tr], tgt_tr[keep_tr], n_tr[keep_tr]).item()
+        l0_va = wce(Q0[keep_va], tgt_va[keep_va], n_va[keep_va]).item() if has_va else float('nan')
+    for it in range(1, steps + 1):
+        opt.zero_grad()
+        Q, _ = head(P, H, mem, sid, n_s)
+        loss = wce(Q[keep_tr], tgt_tr[keep_tr], n_tr[keep_tr]) + wd * sum((p_ ** 2).sum() for p_ in head.mlp.parameters())
+        loss.backward(); opt.step()
+        if has_va and it % 10 == 0:
+            with torch.no_grad():
+                Q, _ = head(P, H, mem, sid, n_s)
+                lv = wce(Q[keep_va], tgt_va[keep_va], n_va[keep_va]).item()
+            if lv < best:
+                best, best_it = lv, it
+                best_state = {k: v.detach().clone() for k, v in head.state_dict().items()}
+    if has_va:
+        head.load_state_dict(best_state)
+    with torch.no_grad():
+        Q, _ = head(P, H, mem, sid, n_s)
+        l1_tr = wce(Q[keep_tr], tgt_tr[keep_tr], n_tr[keep_tr]).item()
+        l1_va = wce(Q[keep_va], tgt_va[keep_va], n_va[keep_va]).item() if has_va else float('nan')
+    print(f'{tag}: {n_s} sets ({int(keep_tr.sum())} with train labels' + (f', {int(keep_va.sum())} with val labels' if has_va else '') + ')  '
+          f'rank {rank} hidden {hidden}  set CE train {l0_tr:.4f} -> {l1_tr:.4f}' + (f'  val {l0_va:.4f} -> {l1_va:.4f} (best at step {best_it})' if has_va else '')
+          + f'  T_res {head.log_t.exp().item():.3f}')
+    return head
+
+
+def apply_set_head(head, P, H, assign, n_cl):
+    a = assign.to(P.device)
+    sets = [(a == j).nonzero().squeeze(1) for j in range(n_cl)]
+    mem, sid, n_s = _set_index(sets, P.device)
+    with torch.no_grad():
+        Q, _ = head(P, H, mem, sid, n_s)
+    return Q
+

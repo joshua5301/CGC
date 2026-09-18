@@ -128,6 +128,14 @@ def para():
                         help='>0: student-in-the-loop ablation - k rounds of (linear student on the condensed set -> '
                              're-cluster in its logit metric -> cell-mean labels); 0 = student-agnostic (Lipschitz rule)')
     parser.add_argument('--cycle_gamma', type=float, default=1e-2, help='ridge of the in-loop linear student')
+    parser.add_argument('--set_head', type=int, default=0,
+                        help='1: group teacher - Deep-Sets head on the node teacher predicts each cell composition (trained on labels)')
+    parser.add_argument('--set_mults', type=str, default='0.5,1,2,4,8', help='training-set granularities as multiples of the cell count')
+    parser.add_argument('--set_rank', type=int, default=0, help='rank of the learned feature block in phi (0 = teacher posteriors only)')
+    parser.add_argument('--set_hidden', type=int, default=32)
+    parser.add_argument('--set_steps', type=int, default=300)
+    parser.add_argument('--set_lr', type=float, default=1e-2)
+    parser.add_argument('--set_wd', type=float, default=1e-3, help='L2 on the residual MLP of the set head')
     parser.add_argument('--label_oracle', type=int, default=0,
                         help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
