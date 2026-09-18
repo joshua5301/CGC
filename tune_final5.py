@@ -38,6 +38,7 @@ FNS     = lambda ds: [0] if LARGE(ds) else [0, 1]
 MU1     = lambda ds: 1.0 if LARGE(ds) else 0.3            # stage-1 mu
 MU2     = lambda ds: [0.3, 3.0] if LARGE(ds) else [1.0]   # stage-2 alternatives
 TEMPS   = [0.5, 0.25]
+TOPK    = 2                          # stage-1 configs (by val) around which mu / T are explored
 WDS, DOS = [5e-4, 5e-3], [0, 0.1, 0.3, 0.5, 0.7, 0.9]
 DOWN1 = ','.join(f'{d:g}' for d in DOS) + ';' + ','.join(f'{w:g}' for w in WDS)
 REP1, FIXED = 3, (0.5, 5e-4)
@@ -74,7 +75,7 @@ def run(ds, r, cfg, down, repeat, stage):
     rows = PAT_D.findall(out)
     if not rows:
         print('FAIL', ds, r, cfg, stage, '\n', out[-1500:]); return
-    ex = re.search(r'expert: train [\d.]+%\s+(?:val ([\d.]+)%\s+)?test ([\d.]+)', out)
+    ex = re.search(r'expert: train ([\d.]+)%(?:\s+val ([\d.]+)%)?(?:\s+test ([\d.]+))?', out)
     en = re.search(r'posterior entropy ([\d.]+) -> ([\d.]+) nats', out)
     pb = re.findall(r'probe: lbfgs (\d+) iters', out)
     cd = re.search(r'cell diag.*', out); cd = cd[0] if cd else ''
@@ -84,12 +85,12 @@ def run(ds, r, cfg, down, repeat, stage):
             f.write(json.dumps(dict(ds=ds, ratio=r, kernel=kernel, space=space, fn=fn, gamma=gamma, mu=mu, temp=temp,
                                     drop=float(do_), wd=float(wd_), repeat=repeat, stage=stage, down=down,
                                     test=float(te), std=float(sd), val=float(va),
-                                    t_val=float(ex[1]) if ex and ex[1] else None, t_test=float(ex[2]) if ex else None,
+                                    t_train=float(ex[1]) if ex else None, t_val=float(ex[2]) if ex and ex[2] else None, t_test=float(ex[3]) if ex and ex[3] else None,
                                     ent_after=float(en[2]) if en else None, lbfgs_iters=int(pb[-1]) if pb else None,
                                     diag=cd, cond_s=ct)) + '\n')
     best = max(rows, key=lambda x: float(x[5]))
     print(f"{ds:8s} r={r:<7g} {kernel:5s} {space:4s} fn={fn} g={gamma:<5g} mu={mu:<3g} T={temp:<4g} [{stage}]  "
-          f"teacher {ex[2] if ex else '?'}  val {best[5]} (do={best[0]} wd={best[1]}) test {best[3]}±{best[4]}  "
+          f"teacher {(ex[3] or ex[1]) if ex else '?'}  val {best[5]} (do={best[0]} wd={best[1]}) test {best[3]}±{best[4]}  "
           f"({round(time.time() - t)}s, cond {ct:.0f}s)")
 
 def pick(ds, r, fixed=False, **fix):
@@ -112,18 +113,20 @@ for ds, r in CELLS:
         cfg = (kernel, space, fn, gamma, MU1(ds), 1.0)
         if not done(ds, r, cfg, 'stage1'):
             run(ds, r, cfg, DOWN1, REP1, 'stage1')
-    b = pick(ds, r, temp=1.0, mu=MU1(ds))
-    k1, s1_, f1, g1 = b.kernel, b.space, int(b.fn), float(b.gamma)
-    for mu in MU2(ds):                                                                              # stage 2
-        cfg = (k1, s1_, f1, g1, mu, 1.0)
-        if not done(ds, r, cfg, 'stage1'):
-            run(ds, r, cfg, DOWN1, REP1, 'stage1')
-    m_best = float(pick(ds, r, temp=1.0, kernel=k1, space=s1_, fn=f1, gamma=g1).mu)
-    for mu in sorted({m_best, MU1(ds)}):                                                            # stage 3
-        for T in TEMPS:
-            cfg = (k1, s1_, f1, g1, mu, T)
+    s1d = load(); s1d = s1d[(s1d.stage == 'stage1') & (s1d.ds == ds) & (s1d.ratio == r) & (s1d.temp == 1.0) & (s1d.mu == MU1(ds))]
+    tops = s1d.sort_values('val', ascending=False).drop_duplicates(['kernel', 'space', 'fn', 'gamma']).head(TOPK)
+    for _, b in tops.iterrows():                                     # stages 2-3 around each of the TOPK stage-1 configs
+        k1, s1_, f1, g1 = b.kernel, b.space, int(b.fn), float(b.gamma)
+        for mu in MU2(ds):                                                                          # stage 2
+            cfg = (k1, s1_, f1, g1, mu, 1.0)
             if not done(ds, r, cfg, 'stage1'):
                 run(ds, r, cfg, DOWN1, REP1, 'stage1')
+        m_best = float(pick(ds, r, temp=1.0, kernel=k1, space=s1_, fn=f1, gamma=g1).mu)
+        for mu in sorted({m_best, MU1(ds)}):                                                        # stage 3
+            for T in TEMPS:
+                cfg = (k1, s1_, f1, g1, mu, T)
+                if not done(ds, r, cfg, 'stage1'):
+                    run(ds, r, cfg, DOWN1, REP1, 'stage1')
     b = pick(ds, r)
     print(f"--> {ds} {r:g}: {cfg_of(b)} do {b['drop']:g} wd {b.wd:g}  val {b.val:.2f} test {b.test:.2f}")
 

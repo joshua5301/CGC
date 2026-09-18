@@ -75,7 +75,7 @@ def run(ds, r, cfg, down, repeat, stage):
     rows = PAT_D.findall(out)
     if not rows:
         print('FAIL', ds, r, cfg, stage, '\n', out[-1500:]); return
-    ex = re.search(r'expert: train [\d.]+%\s+(?:val ([\d.]+)%\s+)?test ([\d.]+)', out)
+    ex = re.search(r'expert: train ([\d.]+)%(?:\s+val ([\d.]+)%)?(?:\s+test ([\d.]+))?', out)
     en = re.search(r'posterior entropy ([\d.]+) -> ([\d.]+) nats at T=([\d.]+)', out)
     cd = re.search(r'cell diag.*', out); cd = cd[0] if cd else ''
     ct = re.search(r'Condensation time: ([0-9.]+)', out); ct = float(ct[1]) if ct else float('nan')
@@ -84,11 +84,11 @@ def run(ds, r, cfg, down, repeat, stage):
             f.write(json.dumps(dict(ds=ds, ratio=r, fn=fn, gamma=gamma, ent=ent, mu=mu,
                                     drop=float(do_), wd=float(wd_), repeat=repeat, stage=stage, down=down,
                                     test=float(te), std=float(sd), val=float(va),
-                                    t_val=float(ex[1]) if ex and ex[1] else None, t_test=float(ex[2]) if ex else None,
+                                    t_train=float(ex[1]) if ex else None, t_val=float(ex[2]) if ex and ex[2] else None, t_test=float(ex[3]) if ex and ex[3] else None,
                                     ent_raw=float(en[1]) if en else None, temp=float(en[3]) if en else None,
                                     diag=cd, cond_s=ct)) + '\n')
     best = max(rows, key=lambda x: float(x[5]))
-    print(f"{ds:8s} r={r:<7g} fn={fn} g={gamma:<5g} ent={ent:<3g} mu={mu:<3g} [{stage}]  teacher {ex[2] if ex else '?'}  "
+    print(f"{ds:8s} r={r:<7g} fn={fn} g={gamma:<5g} ent={ent:<3g} mu={mu:<3g} [{stage}]  teacher {(ex[3] or ex[1]) if ex else '?'}  "
           f"T={en[3] if en else '?'}  val {best[5]} (do={best[0]} wd={best[1]}) test {best[3]}±{best[4]}  "
           f"({round(time.time() - t)}s, cond {ct:.0f}s)")
 
