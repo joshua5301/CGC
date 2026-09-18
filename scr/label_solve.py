@@ -409,6 +409,46 @@ def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30):
     return assign, moved, hc, w
 
 
+def sinkhorn_assign(H, P, assign, k, mu, eps, iters=10, anneal=10.0, sk_iters=50, w_iters=30):
+    """Equal-mass version of l1_assign: the same cost (||h_t - c_j|| / s + mu * KL(p_t || ybar_j)) but the assignment
+    is the entropic optimal-transport plan with uniform marginals (every node mass 1, every cell mass N/k),
+    hardened by argmax. eps is relative to the median cost and annealed from anneal*eps to eps over the rounds.
+    Returns (assign, medians, weights, min cell, max cell)."""
+    H = H.double(); assign = assign.clone().to(H.device)
+    N = len(H)
+    use_lab = P is not None and mu > 0
+    if use_lab:
+        P = P.double().clamp_min(1e-12)
+        ent = (P * P.log()).sum(1)
+    def centres(a):
+        c, w = _weiszfeld(H, a, k, w_iters)
+        if not use_lab:
+            return c, None, w
+        cnt = torch.bincount(a, minlength=k).clamp_min(1).to(H.dtype).unsqueeze(1)
+        yc = torch.zeros(k, P.shape[1], dtype=H.dtype, device=H.device).index_add_(0, a, P) / cnt
+        return c, yc.clamp_min(1e-12), w
+    hc, yc, w = centres(assign)
+    s = (H - hc[assign]).norm(dim=1).mean().clamp_min(1e-12)
+    log_b = math.log(N / k)
+    for it in range(iters):
+        cost = (torch.cdist(H, hc) / s).float()                                   # N x k, unsquared
+        if use_lab:
+            cost = cost + (mu * (ent.unsqueeze(1) - P @ yc.log().T)).float()
+        e = eps * (anneal ** (1 - it / max(iters - 1, 1))) * cost.median().item()
+        logK = -cost / e
+        log_v = torch.zeros(k, device=H.device)
+        for _ in range(sk_iters):
+            log_u = -torch.logsumexp(logK + log_v.unsqueeze(0), 1)               # row sums 1
+            log_v = log_b - torch.logsumexp(logK + log_u.unsqueeze(1), 0)        # column sums N/k
+        new = (logK + log_u.unsqueeze(1) + log_v.unsqueeze(0)).argmax(1)
+        moved = int((new != assign).sum())
+        assign = new
+        hc, yc, w = centres(assign)
+        del cost, logK
+    cnt = torch.bincount(assign, minlength=k)
+    return assign, hc, w, int(cnt.min()), int(cnt.max()), moved
+
+
 def balance_assign(H, assign, k, slack=1.0, iters=20):
     """Equal-mass repair of a partition: cells above cap = ceil(N/k * slack) release their
     farthest members to the nearest cell with spare capacity. Centroids are refreshed each sweep."""
@@ -617,6 +657,12 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
         assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0))
         assign = assign.cpu()
         print(f'l1: distance-sum objective, mu {getattr(args, "bregman", 0.0):g}  last sweep moved {moved} nodes')
+        if getattr(args, 'sinkhorn', 0.0) > 0:
+            assign, _, w, lo, hi, moved = sinkhorn_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0),
+                                                          args.sinkhorn, args.sk_iters, args.sk_anneal)
+            assign = assign.cpu()
+            print(f'sinkhorn (after l1): eps {args.sinkhorn:g} x median cost, {args.sk_iters} rounds (anneal x{args.sk_anneal:g})  '
+                  f'last round moved {moved} nodes  cell size min/max {lo}/{hi} (target {len(Hw) // k})')
         if getattr(args, 'balanced', 0.0) > 0:
             assign, lo, hi, cap = balance_assign(Hw, assign.to(Hw.device), k, args.balanced)
             w = _weiszfeld(Hw, assign, k)[1]

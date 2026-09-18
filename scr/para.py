@@ -139,6 +139,10 @@ def para():
     parser.add_argument('--resid_corr', type=float, default=0.0,
                         help='>0: add the shrunk mean out-of-fold teacher residual of the labelled members to each cell label (kappa)')
     parser.add_argument('--resid_folds', type=int, default=5)
+    parser.add_argument('--sinkhorn', type=float, default=0.0,
+                        help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')
+    parser.add_argument('--sk_iters', type=int, default=10, help='Lloyd rounds of --sinkhorn')
+    parser.add_argument('--sk_anneal', type=float, default=10.0, help='eps starts at anneal x --sinkhorn and decays geometrically to --sinkhorn')
     parser.add_argument('--label_oracle', type=int, default=0,
                         help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
