@@ -1102,13 +1102,29 @@ def _bandwidth(B, kind, bw_mult=1.0):
     return None if bw is None else bw * bw_mult      # <1: sharper / more nonlinear, >1: closer to linear
 
 
-def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000):
+def pick_basis(H, m, mode='kmeans', seed=0):
+    """Nystrom inducing points for the kernel teacher / kernel clustering space.
+    kmeans (default): the m k-means centroids of H (deterministic given faiss, covers the space evenly - the standard
+    improvement over uniform sampling for Nystrom); random: m uniformly sampled rows (legacy). m >= len(H) -> H itself."""
+    if m <= 0 or m >= len(H):
+        return H
+    if mode == 'random':
+        g = torch.Generator(); g.manual_seed(seed)
+        return H[torch.randperm(len(H), generator=g)[:m].to(H.device)]
+    import faiss
+    km = faiss.Kmeans(int(H.shape[1]), int(m), gpu=False, seed=int(seed))
+    km.cp.min_points_per_centroid = 1
+    km.train(H.detach().cpu().numpy().astype('float32'))
+    return torch.from_numpy(km.centroids).to(H.device, H.dtype)
+
+
+def nngp_feats(H, kind, m, seed, bw_mult=1.0, chunk=20000, basis_mode='kmeans'):
     """Clustering-only feature map psi(h) = k(h,B) L^{-T} (Nystrom, B = m random rows, K_BB = L L^T),
     so ||psi(h) - psi(h')||^2 ~= k(h,h) + k(h',h') - 2 k(h,h'), the NNGP kernel distance of the student
     architecture = E_W ||phi(W h) - phi(W h')||^2 over a random-init MLP, i.e. the student-prior
     expectation of the linear-student term ||W (h - h')||^2. The condensed x' stays the mean of h."""
     g = torch.Generator(); g.manual_seed(seed)
-    B = H[torch.randperm(len(H), generator=g)[:m].to(H.device)].double()
+    B = pick_basis(H, m, basis_mode, seed).double()
     d, bw = B.shape[1], _bandwidth(B.double(), kind, bw_mult)
     K_BB = _kernel(B, B, kind, d, bw)
     K_BB = (K_BB + K_BB.T) / 2

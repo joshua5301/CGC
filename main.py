@@ -46,7 +46,7 @@ else:
         args.budget = min(int(n_keep * args.cand_mult), len(H_pool))
     Hc = None
     if args.cluster_feat == 'nngp':
-        Hc = nngp_feats(H_pool, args.label_kernel, min(args.nngp_basis, len(H_pool)), args.seed, args.kernel_bw)
+        Hc = nngp_feats(H_pool, args.label_kernel, min(args.nngp_basis, len(H_pool)), args.seed, args.kernel_bw, basis_mode=args.basis_mode)
         print(f'cluster space[nngp/{args.label_kernel}]: {Hc.shape[1]}d Nystrom features of the student-prior kernel')
     elif args.cluster_feat != 'last':
         Hc = multiscale_feats(pool_d, args.cluster_feat, args.hp_w)
@@ -60,10 +60,7 @@ else:
         early_teacher = None
         if args.refine_teacher == 'kernel' and args.label_mode == 'kernel_mean':
             # same teacher for the KL refinement and the labels: fit the kernel teacher now, reuse it below
-            basis0 = pf0
-            if args.expert_basis > 0:
-                gz = torch.Generator(); gz.manual_seed(args.seed)
-                basis0 = pf0[torch.randperm(len(pf0), generator=gz)[:args.expert_basis].to(pf0.device)]
+            basis0 = pick_basis(pf0, args.expert_basis, args.basis_mode, args.seed)
             early_teacher = kernel_teacher(HL0, basis0, YL0, args.gamma, args.ce_steps, args.label_kernel,
                                            args.kernel_prior, args.kernel_bw, loss=args.teacher_loss, tol=args.probe_tol) + (basis0,)
             P0 = F.softmax(early_teacher[0](pf0).double() / args.teacher_temp, dim=1)
@@ -221,10 +218,8 @@ else:
                 basis = pre[-1]
                 print(f'expert basis: {len(basis)} inducing points (shared with the refinement teacher)')
             elif args.expert_basis > 0:
-                gz = torch.Generator(); gz.manual_seed(args.seed)
-                pick = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
-                basis = pf[pick.to(pf.device)]
-                print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
+                basis = pick_basis(pf, args.expert_basis, args.basis_mode, args.seed)
+                print(f'expert basis: {len(basis)} inducing points [{args.basis_mode}] (landmarks {len(hl)})')
             Y, ctx = solve_labels_kernel(H_fit, basis, T_fit, args.gamma, args.ce_steps,
                                          args.label_kernel, pf, assign, len(hl), sel,
                                          args.kernel_prior, args.kernel_bw, pre=None if pre is None else pre[:4],
@@ -235,9 +230,7 @@ else:
             if args.expert_basis > 0:
                 if pf is None:
                     raise SystemExit('--expert_basis needs --label_mode logistic_mean')
-                gz = torch.Generator(); gz.manual_seed(args.seed)
-                pick = torch.randperm(len(pf), generator=gz)[:args.expert_basis]
-                basis, n_cl = pf[pick.to(pf.device)], len(hl)
+                basis, n_cl = pick_basis(pf, args.expert_basis, args.basis_mode, args.seed), len(hl)
                 print(f'expert basis: {len(basis)} inducing points (landmarks {len(hl)})')
             Y, ctx = solve_labels_logistic(H_fit, basis, T_fit, args.beta, args.gamma,
                                            args.ce_steps, prior, args.label_kernel,

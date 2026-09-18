@@ -161,6 +161,9 @@ def para():
                         help='label averaging set: all, or unlabeled (out-of-sample only)')
     parser.add_argument('--expert_basis', type=int, default=0,
                         help='logistic_mean: kernel basis size, 0 = use the landmarks')
+    parser.add_argument('--basis_mode', type=str, default='kmeans', choices=['kmeans', 'random'],
+                        help='Nystrom inducing points for the kernel teacher and the nngp clustering space: '
+                             'kmeans = the --expert_basis k-means centroids of the pool (default), random = uniform rows (legacy)')
     parser.add_argument('--w_steps', type=int, default=300, help='weighted: Adam steps')
     parser.add_argument('--w_lr', type=float, default=0.05, help='weighted: Adam lr')
     parser.add_argument('--w_mu', type=float, default=0.0,
