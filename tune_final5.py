@@ -185,6 +185,16 @@ if len(d0):
     d0 = d0.assign(cell=d0.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f} (do={x['drop']:g} wd={x['wd']:g})", axis=1))
     print('\n##### default condensation config (erf, raw, fn 0, T 1; large: gamma 1e-3 mu 1, small: gamma 1 mu 0.3), recipe val-selected, stage-1 repeats')
     print(d0.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
+# selection-noise check: re-select on val within a reduced recipe grid (dropout <= 0.7, wd 5e-4) - no reruns needed
+red = s1[(s1['drop'] <= 0.7) & (s1.wd == 5e-4)]
+if len(red):
+    rb = red.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1)
+    rb = rb.assign(cell=rb.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f} ({x['kernel']} {x['space']} fn={x['fn']} g={x['gamma']:g} mu={x['mu']:g} T={x['temp']:g} do={x['drop']:g})", axis=1))
+    print('\n##### val-selected within the reduced recipe grid (dropout <= 0.7, wd 5e-4), stage-1 repeats')
+    print(rb.pivot_table(index='ds', columns='ratio', values='cell', aggfunc='first').to_string())
+    full = s1.sort_values('val', ascending=False).groupby(['ds', 'ratio']).head(1).set_index(['ds', 'ratio']).test
+    print('\n##### reduced-grid selection minus full-grid selection (test)')
+    print((rb.set_index(['ds', 'ratio']).test - full).round(2).unstack('ratio').to_string())
 fin, fix = top('final'), top('fixed')
 if len(fin) and len(fix):
     d = (fin.set_index(['ds', 'ratio']).test - fix.set_index(['ds', 'ratio']).test).round(2)
