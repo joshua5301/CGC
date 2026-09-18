@@ -290,6 +290,21 @@ else:
             print(f'set head: labels moved  mean L1 {(Y_s - Y).abs().sum(1).mean():.4f}  argmax changed '
                   f'{100 * (Y_s.argmax(1) != Y.argmax(1)).double().mean():.1f}% of cells  H {mean_entropy(Y):.3f} -> {mean_entropy(Y_s):.3f}')
             Y = Y_s
+        if args.resid_corr > 0 and args.label_mode == 'kernel_mean' and assign is not None:
+            # residual correction of the cell labels from the labelled members: q_j += lam_j * mean_{t in C_j cap L}(y_t - f_oof(h_t)),
+            # lam_j = n_j^L / (n_j^L + kappa); f_oof = K-fold out-of-fold teacher (in-sample residuals are ~0)
+            R, acc_oof = oof_residuals(H_fit, basis, T_fit, args.gamma, args.ce_steps, args.label_kernel, args.kernel_prior,
+                                       args.kernel_bw, args.teacher_loss, args.probe_tol, args.teacher_temp, args.resid_folds, args.seed)
+            a_r = assign.to(Y.device)[tr_pool.nonzero().squeeze(1).to(Y.device)]
+            n_L = torch.bincount(a_r, minlength=len(Y)).double()
+            r_sum = torch.zeros_like(Y).index_add_(0, a_r, R.to(Y.device))
+            lam = n_L / (n_L + args.resid_corr)
+            Yr = (Y + lam.unsqueeze(1) * r_sum / n_L.clamp_min(1).unsqueeze(1)).clamp_min(0)
+            Yr = Yr / Yr.sum(1, keepdim=True)
+            print(f'resid_corr: kappa {args.resid_corr:g}  {args.resid_folds}-fold OOF teacher acc {100 * acc_oof:.2f}%  '
+                  f'cells with labels {int((n_L > 0).sum())}/{len(Y)} (labels/cell {n_L[n_L > 0].mean():.1f})  '
+                  f'mean L1 move {(Yr - Y).abs().sum(1).mean():.4f}  argmax changed {100 * (Yr.argmax(1) != Y.argmax(1)).double().mean():.1f}% of cells')
+            Y = Yr
         if args.label_temp != 1.0 or args.label_hard:
             # label sharpening ablation: temperature T on the cell-mean posterior (T -> 0 = argmax one-hot)
             ent0 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()

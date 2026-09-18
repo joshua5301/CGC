@@ -136,6 +136,9 @@ def para():
     parser.add_argument('--set_steps', type=int, default=300)
     parser.add_argument('--set_lr', type=float, default=1e-2)
     parser.add_argument('--set_wd', type=float, default=1e-3, help='L2 on the residual MLP of the set head')
+    parser.add_argument('--resid_corr', type=float, default=0.0,
+                        help='>0: add the shrunk mean out-of-fold teacher residual of the labelled members to each cell label (kappa)')
+    parser.add_argument('--resid_folds', type=int, default=5)
     parser.add_argument('--label_oracle', type=int, default=0,
                         help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],

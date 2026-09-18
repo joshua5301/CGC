@@ -617,6 +617,11 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
         assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0))
         assign = assign.cpu()
         print(f'l1: distance-sum objective, mu {getattr(args, "bregman", 0.0):g}  last sweep moved {moved} nodes')
+        if getattr(args, 'balanced', 0.0) > 0:
+            assign, lo, hi, cap = balance_assign(Hw, assign.to(Hw.device), k, args.balanced)
+            w = _weiszfeld(Hw, assign, k)[1]
+            assign = assign.cpu()
+            print(f'balanced (after l1): cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
         h, remap = _cluster_wmeans(H_pool, assign, k, w.to(H_pool.dtype))
         return h, remap, [_cluster_wmeans(E, assign, k, w.to(E.dtype))[0] for E in extra]
     if getattr(args, 'bregman', 0.0) > 0 and P is not None:
@@ -1459,4 +1464,19 @@ def apply_set_head(head, P, H, assign, n_cl):
     with torch.no_grad():
         Q, _ = head(P, H, mem, sid, n_s)
     return Q
+
+
+def oof_residuals(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult, loss, tol, temp, folds, seed):
+    """K-fold out-of-fold posteriors of the kernel teacher on the labelled nodes; returns y_t - f(h_t) and the OOF accuracy."""
+    n = len(H_L)
+    g = torch.Generator(); g.manual_seed(seed)
+    perm = torch.randperm(n, generator=g).to(H_L.device)
+    P = torch.zeros(n, Y_L.shape[1], dtype=torch.float64, device=H_L.device)
+    for f in range(folds):
+        te = perm[f::folds]
+        tr = torch.ones(n, dtype=torch.bool, device=H_L.device); tr[te] = False
+        pred = kernel_teacher(H_L[tr], B, Y_L[tr], gamma, steps, kind, prior, bw_mult, loss=loss, tol=tol)[0]
+        P[te] = F.softmax(pred(H_L[te]).double() / temp, dim=1)
+    acc = (P.argmax(1) == Y_L.argmax(1)).double().mean().item()
+    return Y_L.double() - P, acc
 
