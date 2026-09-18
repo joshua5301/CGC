@@ -430,11 +430,12 @@ def sinkhorn_assign(H, P, assign, k, mu, eps, iters=10, anneal=10.0, sk_iters=50
     hc, yc, w = centres(assign)
     s = (H - hc[assign]).norm(dim=1).mean().clamp_min(1e-12)
     log_b = math.log(N / k)
+    moved = 0
     for it in range(iters):
         cost = (torch.cdist(H, hc) / s).float()                                   # N x k, unsquared
         if use_lab:
             cost = cost + (mu * (ent.unsqueeze(1) - P @ yc.log().T)).float()
-        e = eps * (anneal ** (1 - it / max(iters - 1, 1))) * cost.median().item()
+        e = eps * (anneal ** (1 - it / (iters - 1)) if iters > 1 else 1.0) * cost.median().item()   # anneal*eps -> eps
         logK = -cost / e
         log_v = torch.zeros(k, device=H.device)
         for _ in range(sk_iters):
