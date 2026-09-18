@@ -282,6 +282,28 @@ else:
             ent1 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()
             print(f'label sharpen: ' + ('argmax' if args.label_hard else f'T={args.label_temp:g}') +
                   f'  mean entropy {ent0:.3f} -> {ent1:.3f}  maxp {Y.max(1)[0].mean():.3f}')
+        if pf is not None and assign is not None:
+            # group diag: how well the condensed labels q_j estimate the TRUE class composition of their cells
+            # (uses every pool label -> diagnostic only; --label_oracle 1 substitutes them = label-estimation ceiling)
+            a_g = assign.to(Y.device)
+            Yt = teacher_mean_labels(F.one_hot(y_pool.to(Y.device), Y.shape[1]).double(), a_g, len(Y))
+            w_g = torch.bincount(a_g, minlength=len(Y)).double(); w_g = w_g / w_g.sum()
+            lg = lambda Q: Q.clamp_min(1e-12).log()
+            ent = lambda Q: -(Q.clamp_min(1e-12) * lg(Q)).sum(1)
+            kl_g = (w_g * (Yt * (lg(Yt) - lg(Y))).sum(1)).sum()
+            l1_g = (w_g * (Yt - Y).abs().sum(1)).sum()
+            agree = (w_g * (Yt.argmax(1) == Y.argmax(1)).double()).sum()
+            P_n = ctx['P'] if 'P' in ctx else F.softmax(pf.double() @ ctx['W'], dim=1) if 'W' in ctx else None
+            node = ''
+            if P_n is not None:
+                yp = y_pool.to(P_n.device)
+                node = (f'  | node teacher on the pool: NLL {(-lg(P_n).gather(1, yp.unsqueeze(1))).mean():.4f}  '
+                        f'acc {100 * (P_n.argmax(1) == yp).double().mean():.2f}%  H {ent(P_n).mean():.3f}')
+            print(f'group diag: KL(true||q) {kl_g:.4f}  L1 {l1_g:.4f}  argmax agree {100 * agree:.1f}%  '
+                  f'H(true) {(w_g * ent(Yt)).sum():.3f}  H(q) {(w_g * ent(Y)).sum():.3f}  (n-weighted, {len(Y)} cells){node}')
+            if args.label_oracle:
+                Y = Yt
+                print('label_oracle: condensed labels replaced by the TRUE cell compositions (diagnostic ceiling)')
         label_cond = Y.float()
         if 'W' in ctx or 'dual' in ctx or 'kfun' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx

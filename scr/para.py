@@ -128,6 +128,8 @@ def para():
                         help='>0: student-in-the-loop ablation - k rounds of (linear student on the condensed set -> '
                              're-cluster in its logit metric -> cell-mean labels); 0 = student-agnostic (Lipschitz rule)')
     parser.add_argument('--cycle_gamma', type=float, default=1e-2, help='ridge of the in-loop linear student')
+    parser.add_argument('--label_oracle', type=int, default=0,
+                        help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
                         help='l2: squared distance + mu*KL, mean centres (Bregman k-means); '
                              'l1: distance sum + mu*KL (the Lipschitz bound), geometric-median centres (Weiszfeld)')
