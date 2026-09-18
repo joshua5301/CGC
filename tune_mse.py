@@ -6,7 +6,7 @@
 #   stage 1  large graphs: gamma {1e-4 .. 1e-1} x ent {0.3, 0.6, 0.9}                 at mu 1     (12)
 #            small graphs: fn {0,1} x gamma {1e-2 .. 30} x ent {0.3, 0.6, 0.9}       at mu 0.3   (30)
 #   stage 2  at the val-best: the other mu values (large {0.3, 3}, small {1})
-# Fixed: erf, raw space, basis 3000, l1 k-medians, depth 2; wd {5e-4, 5e-3} x dropout {0,.1,.3,.5,.7,.9}, repeat 3.
+# Fixed: erf, raw space, basis 3000, l1 k-medians, depth 2; wd 5e-4, dropout {0,.1,.3,.5,.7} on val, repeat 3, eval every 10 epochs.
 # Stage 3 (Cell 3): repeat 10 at the val-best + fixed recipe + mu=0 ablation.
 SESSION = 'A'
 import subprocess, re, json, os, time, glob, itertools
@@ -39,7 +39,7 @@ FNS    = lambda ds: [0] if LARGE(ds) else [0, 1]
 ENTS   = [0.3, 0.6, 0.9]
 MU1    = lambda ds: 1.0 if LARGE(ds) else 0.3
 MU2    = lambda ds: [0.3, 3.0] if LARGE(ds) else [1.0]
-WDS, DOS = [5e-4, 5e-3], [0, 0.1, 0.3, 0.5, 0.7, 0.9]
+WDS, DOS = [5e-4], [0, 0.1, 0.3, 0.5, 0.7]      # wd fixed (5e-3 never wins beyond noise; dropout 0.9 only hurts)
 DOWN1 = ','.join(f'{d:g}' for d in DOS) + ';' + ','.join(f'{w:g}' for w in WDS)
 REP1, FIXED = 3, (0.5, 5e-4)
 KEYS = ['fn', 'gamma', 'ent', 'mu']
