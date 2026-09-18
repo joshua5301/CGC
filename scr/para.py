@@ -124,6 +124,10 @@ def para():
                         help='>=0: move each condensed x_j from the cell mean to argmin CE(ybar_j, f(x)) + refine_c*||x-hbar_j||^2/s '
                              'under the kernel teacher f (teacher-consistent representatives); -1 = off')
     parser.add_argument('--refine_steps', type=int, default=50, help='LBFGS iterations for --refine_c')
+    parser.add_argument('--cycle', type=int, default=0,
+                        help='>0: student-in-the-loop ablation - k rounds of (linear student on the condensed set -> '
+                             're-cluster in its logit metric -> cell-mean labels); 0 = student-agnostic (Lipschitz rule)')
+    parser.add_argument('--cycle_gamma', type=float, default=1e-2, help='ridge of the in-loop linear student')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
                         help='l2: squared distance + mu*KL, mean centres (Bregman k-means); '
                              'l1: distance sum + mu*KL (the Lipschitz bound), geometric-median centres (Weiszfeld)')

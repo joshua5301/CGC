@@ -254,6 +254,24 @@ else:
                 Y, ctx = solve_labels_probe(H_fit, hl, T_fit, args.gamma, args.ce_steps,
                                             args.target_maxp, args.maxp_iters, pf, assign,
                                             sel)
+        if args.cycle > 0 and pf is not None and assign is not None:
+            # student-in-the-loop ablation (student-specific counterpart of the Lipschitz rule): fit a linear
+            # student W on the condensed set, re-cluster the pool in its logit metric ||(h - c) W|| (rescaled to
+            # the raw-space variance so mu keeps its meaning), take cell-mean teacher labels again, repeat
+            P_t = ctx['P'] if 'P' in ctx else F.softmax(pf.double() @ ctx['W'], dim=1)
+            Yc, ev = Y, lambda W, msk: (100 * ((H_all.double() @ W).argmax(1)[msk] == data.y[msk]).double().mean()).item()
+            for cyc in range(1, args.cycle + 1):
+                W_s = fit_probe_W(hl, Yc, args.cycle_gamma, args.ce_steps, tol=args.probe_tol)[0]
+                Z = pf.double() @ W_s
+                Z = (Z * (H_pool.double().var(0).sum() / Z.var(0).sum().clamp_min(1e-12)).sqrt()).float()
+                h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Z, graph=pg, P=P0)
+                hl = label_feats(args.label_feat, h_d)
+                Yn = teacher_mean_labels(P_t, assign, len(hl), sel)
+                print(f'cycle {cyc}: linear student on the condensed set  train {ev(W_s, data.train_mask):.2f}%'
+                      + (f'  test {ev(W_s, data.test_mask):.2f}%' if hasattr(data, 'test_mask') else '')
+                      + f'  -> re-clustered in its {Z.shape[1]}d logit space  label change {(Yn - Yc).abs().sum(1).mean():.4f}')
+                Yc = Yn
+            Y = Yc
         if args.label_temp != 1.0 or args.label_hard:
             # label sharpening ablation: temperature T on the cell-mean posterior (T -> 0 = argmax one-hot)
             ent0 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()

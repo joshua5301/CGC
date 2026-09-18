@@ -1122,7 +1122,7 @@ def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel
               f'(uniform = {math.log(P.shape[1]):.3f})')
     Y = _pool_means(P, assign.to(P.device), n_cl, sel)
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),
-           'kfun': pred, 'A': A}
+           'kfun': pred, 'A': A, 'P': P}
     return Y, ctx
 
 
