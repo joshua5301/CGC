@@ -420,6 +420,10 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
         loss.backward()
         optimizer.step()
 
+        # full-graph evaluation dominates the cost on large graphs; --eval_every k checks val every k epochs
+        ev = int(getattr(args, 'eval_every', 1))
+        if epoch % ev != 0 and epoch != args.epoch:
+            continue
         if args.dataset_name in ['flickr', 'reddit']:
             train_acc, val_acc, tmp_test_acc = test_inductive(args, model, data_val, data_test)
         else:

@@ -25,7 +25,7 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
         "--landmark kmeans --h_pool all --ce_steps 1000 --probe_tol 1e-6 --head ce "
         "--label_mode kernel_mean --teacher_loss mse --label_kernel erf --kernel_prior rkhs "
         "--cluster_obj l1 --cluster_feat last --expert_basis 3000 --conv_depth 2 "
-        "--no_hyperpara 1 --lr 0.01 --epoch 1000 --dropout 0.5 --weight_decay 5e-4")
+        "--no_hyperpara 1 --lr 0.01 --epoch 1000 --eval_every 10 --dropout 0.5 --weight_decay 5e-4")
 RATIOS = {'cora': [0.013, 0.026, 0.052], 'citeseer': [0.009, 0.018, 0.036],
           'arxiv': [0.0005, 0.0025, 0.005], 'flickr': [0.001, 0.005, 0.01],
           'reddit': [0.0005, 0.001, 0.002]}

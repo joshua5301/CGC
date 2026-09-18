@@ -14,6 +14,7 @@ def para():
     parser.add_argument('--result_path', type=str, default="./results")
     parser.add_argument('--cond_folder', type=str, default="./cond_graph/")
     parser.add_argument('--epoch', type=int, default=1000)
+    parser.add_argument('--eval_every', type=int, default=1, help='downstream: evaluate val/test every k epochs (best-val epoch at k-epoch resolution)')
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n_dim', type=int, default=256)
