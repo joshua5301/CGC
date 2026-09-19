@@ -165,6 +165,9 @@ def para():
     parser.add_argument('--prox_tau', type=float, default=0.0,
                         help='>0: weight each node in the cell mean by exp(-(d - d_min) / (tau * median d)), d = H-distance to the nearest training node')
     parser.add_argument('--prox_min', type=float, default=0.0, help='floor of the proximity weight (0 = none)')
+    parser.add_argument('--label_aug', type=str, default='',
+                        help="extra propagation depths whose views of the SAME cell members are added to the label average, e.g. '1' or '0,1' (CGC-style augmentation, labels only)")
+    parser.add_argument('--label_aug_w', type=float, default=1.0, help='weight of each extra view relative to the main view')
     parser.add_argument('--teacher_only', type=int, default=0, help='1: fit the (refinement) teacher, print its val/test accuracy and exit')
     parser.add_argument('--sinkhorn', type=float, default=0.0,
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')

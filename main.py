@@ -293,7 +293,9 @@ else:
                                          args.label_kernel, pf, assign, len(hl), sel,
                                          args.kernel_prior, args.kernel_bw, pre=None if pre is None else pre[:4],
                                          temp=args.teacher_temp, ent=args.teacher_ent, loss=args.teacher_loss, tol=args.probe_tol,
-                                         post=locals().get('prop_fn'))
+                                         post=locals().get('prop_fn'),
+                                         extra_pools=[pool_d[int(d)] for d in args.label_aug.split(',') if d.strip()] if args.label_aug else (),
+                                         extra_w=args.label_aug_w, y_pool=y_pool)
             ctx['basis'] = basis
         elif args.label_mode.startswith('logistic'):
             basis, n_cl = hl, 0

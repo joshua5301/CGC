@@ -1315,7 +1315,7 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce', tol=1e-10, post=None):
+                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce', tol=1e-10, post=None, extra_pools=(), extra_w=1.0, y_pool=None):
     """temp / ent: per-node sharpening of the teacher posteriors BEFORE cell averaging (gamma sets the teacher's
     accuracy; a strongly regularised teacher has small logits, i.e. flat posteriors, which starves the student).
     ent > 0: temperature matched so the mean posterior entropy is ent nats; else divide logits by temp."""
@@ -1332,6 +1332,23 @@ def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel
         print(f'teacher[kernel]: posterior entropy {ent0:.3f} -> {mean_entropy(P):.3f} nats at T={T:.3f} '
               f'(uniform = {math.log(P.shape[1]):.3f})')
     Y = _pool_means(P, assign.to(P.device), n_cl, sel)
+    if len(extra_pools):
+        # label augmentation (CGC-style views): the same cell members seen at other propagation depths, teacher applied
+        # to those views, posteriors averaged together with the main view (weight extra_w per extra view)
+        acc, wsum = Y * 1.0, 1.0
+        for Xe in extra_pools:
+            Pe = F.softmax(pred(Xe).double(), dim=1)
+            if post is not None:
+                Pe = post(Pe)
+            if ent > 0:
+                Pe = match_entropy(Pe, ent)[0]
+            elif temp != 1.0:
+                Pe = F.softmax(Pe.clamp_min(1e-12).log() / temp, dim=1)
+            if y_pool is not None:
+                print(f'label_aug view: teacher accuracy on this view {100 * (Pe.argmax(1) == y_pool.to(Pe.device)).double().mean():.2f}%  '
+                      f'(main view {100 * (P.argmax(1) == y_pool.to(P.device)).double().mean():.2f}%)  agreement of argmax with the main view {100 * (Pe.argmax(1) == P.argmax(1)).double().mean():.1f}%')
+            acc = acc + extra_w * _pool_means(Pe, assign.to(Pe.device), n_cl, sel); wsum += extra_w
+        Y = acc / wsum
     ctx = {'loss': loss, 'gnorm': gnorm, 'rank': int(B.shape[0]), 'gamma_rel': float(gamma),
            'kfun': pred, 'A': A, 'P': P}
     return Y, ctx
