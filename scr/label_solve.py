@@ -995,6 +995,32 @@ def teacher_cs(P, adj_norm, train_mask, Y_train, resid_train=None, correct=True,
     return G, stats
 
 
+def label_propagation(adj_norm, train_mask, Y_train, n, alpha=0.9, iters=50, dtype=torch.float64):
+    """Classic label propagation of the training one-hots only: G0 = 0 except G0[train] = Y_train;
+    G <- (1 - alpha) G0 + alpha A_hat G, iters times. Returns the UNNORMALISED scores (row mass = reachability)."""
+    A = adj_norm.to(dtype)
+    G0 = torch.zeros(n, Y_train.shape[1], dtype=dtype, device=A.device)
+    G0[train_mask.to(A.device)] = Y_train.to(dtype).to(A.device)
+    G = G0
+    for _ in range(int(iters)):
+        G = (1 - alpha) * G0 + alpha * torch.sparse.mm(A, G)
+    return G
+
+
+def mix_with_lp(P, LP, gamma, mode='norm'):
+    """P_t <- (1 - gamma) f_t + gamma LP_t  (GIFT-style hard-label mixing with the propagated labels standing in for the
+    hard labels). norm: LP rows normalised to the simplex (rows with no mass keep the teacher); raw: LP row mass acts as a
+    confidence, P <- f + gamma * LP / mean row mass, then renormalised."""
+    LP = LP.to(P.device, P.dtype)
+    mass = LP.sum(1, keepdim=True)
+    if mode == 'norm':
+        LPn = torch.where(mass > 1e-12, LP / mass.clamp_min(1e-12), P)
+        Q = (1 - gamma) * P + gamma * LPn
+    else:
+        Q = P + gamma * LP / mass.mean().clamp_min(1e-12)
+    return Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
+
+
 def match_entropy(P, target, iters=40):
     logp = P.clamp_min(1e-12).log()
     lo, hi = 1e-3, 1e3

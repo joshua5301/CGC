@@ -66,6 +66,17 @@ else:
             adj_prop = normalize_adj_sparse(data).to(pf0.device)
             seeds_p = F.one_hot(data.y[data.train_mask], args.num_class).double().to(pf0.device) if args.prop_seed else None
             prop_fn = lambda P: propagate_posterior(P, adj_prop, args.teacher_prop, args.prop_alpha, seeds_p, data.train_mask.to(P.device))
+        if args.lp_mix > 0:
+            # GIFT-style label mixing: the teacher posterior is interpolated with the label-propagated training one-hots
+            if args.h_pool != 'all':
+                raise SystemExit('--lp_mix needs --h_pool all')
+            adj_prop = normalize_adj_sparse(data).to(pf0.device)
+            LP_mix = label_propagation(adj_prop, data.train_mask, YL0, len(data.y), args.lp_alpha, args.lp_iters)
+            _lp_pred = LP_mix.argmax(1); _yd = data.y.to(LP_mix.device)
+            _lpacc = lambda m: (100 * (_lp_pred[m.to(LP_mix.device)] == _yd[m.to(LP_mix.device)]).double().mean()).item()
+            print(f'lp_mix: label propagation alone (alpha {args.lp_alpha:g}, {args.lp_iters} iters)  val {_lpacc(data.val_mask):.2f}%  '
+                  f'test {_lpacc(data.test_mask):.2f}%  rows without mass {100 * (LP_mix.sum(1) < 1e-12).double().mean():.1f}%')
+            prop_fn = lambda P, _LP=LP_mix: mix_with_lp(P, _LP, args.lp_mix, args.lp_mode)
         if args.tcs_smooth_iters > 0:
             # full Correct & Smooth on the teacher posteriors (kernel teacher when --refine_teacher kernel); residuals of the
             # Correct step are out-of-fold (the in-sample residuals of the kernel teacher are ~0) unless --cs_resid insample
@@ -88,7 +99,7 @@ else:
             def _prop_report(P, tag):
                 yd = data.y.to(P.device); pr = P.argmax(1)
                 acc = lambda m: (100 * (pr[m.to(P.device)] == yd[m.to(P.device)]).double().mean()).item()
-                print(f'teacher_prop[{tag}]: ' + (f'C&S correct={args.tcs_correct} a1={args.tcs_alpha1:g}x{args.tcs_iters} a2={args.tcs_alpha2:g}x{args.tcs_smooth_iters} ' if args.tcs_smooth_iters > 0 else f'k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed} ')
+                print(f'teacher_prop[{tag}]: ' + (f'lp_mix gamma={args.lp_mix:g} {args.lp_mode} alpha={args.lp_alpha:g} ' if args.lp_mix > 0 else f'C&S correct={args.tcs_correct} a1={args.tcs_alpha1:g}x{args.tcs_iters} a2={args.tcs_alpha2:g}x{args.tcs_smooth_iters} ' if args.tcs_smooth_iters > 0 else f'k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed} ')
                       + f' val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P):.3f}  (P0 = {args.refine_teacher} teacher)')
         early_teacher = None
         if args.refine_teacher == 'kernel' and args.label_mode == 'kernel_mean':
