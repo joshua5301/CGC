@@ -80,14 +80,20 @@ def student(basis, gamma):
 print(f'basis2 {SESSION}: {ds} {r:g}  bases {BASES} x gamma {[gamma0 * g for g in GMULT]}')
 
 # ============ Cell 2: stage 1 - teacher only =============
+def teacher_done(basis, gamma):
+    df = load()
+    if not len(df) or 'stage' not in df.columns:
+        return False
+    m = df[(df.stage == 'teacher') & (df.ds == ds) & (df.basis == basis) & (df.gamma == gamma)]
+    return bool(len(m) and (m.t_val.notna() | m.t_train.notna()).any())      # rows without any accuracy (stale parser) are redone
 for basis, gm in itertools.product(BASES, GMULT):
-    if not done(stage='teacher', basis=basis, gamma=gamma0 * gm):
+    if not teacher_done(basis, gamma0 * gm):
         teacher(basis, gamma0 * gm)
-t = load(); t = t[(t.stage == 'teacher') & (t.ds == ds)]
-print(t.pivot_table(index='basis', columns='gamma', values=['t_val', 't_test', 'secs', 'mem']).round(2).to_string())
+t = load(); t = t[(t.stage == 'teacher') & (t.ds == ds) & (t.t_val.notna() | t.t_train.notna())]
+print(t.pivot_table(index='basis', columns='gamma', values=['t_val', 't_test', 't_train', 'secs', 'mem']).round(2).to_string())
 
 # ============ Cell 3: stage 2 - students where the teacher is competitive =============
-t = load(); t = t[(t.stage == 'teacher') & (t.ds == ds)]
+t = load(); t = t[(t.stage == 'teacher') & (t.ds == ds) & (t.t_val.notna() | t.t_train.notna())]
 key = 't_val' if t.t_val.notna().all() else 't_train'
 best = t[key].max()
 for _, row in t.iterrows():
