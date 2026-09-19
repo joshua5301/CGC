@@ -959,6 +959,42 @@ def propagate_posterior(P, adj_norm, k, alpha, seeds=None, seed_mask=None):
     return Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
 
 
+def correct_and_smooth(P, adj_norm, train_mask, Y_train, resid_train=None, correct=True, alpha1=0.8, iters1=50,
+                       scale='auto', alpha2=0.8, iters2=50):
+    """Correct & Smooth (Huang et al. 2021) on teacher posteriors P (N x C) over the ORIGINAL graph.
+    Correct: E = 0 except E[train] = residual (Y - P_oof or Y - P); E <- (1-a1) E0 + a1 A E, iters1 times;
+             P <- P + s * E, s = autoscale (mean L1 of the training residuals / row L1 of E) or a fixed number; rows clipped to the simplex.
+    Smooth:  G0 = P with the training rows replaced by their labels; G <- (1-a2) G0 + a2 A G, iters2 times."""
+    A = adj_norm.to(P.device)
+    if A.dtype != P.dtype:
+        A = A.to(P.dtype)
+    m = train_mask.to(P.device)
+    Q = P.clone()
+    stats = {}
+    if correct:
+        E0 = torch.zeros_like(Q)
+        R = (Y_train.to(Q.dtype) - Q[m]) if resid_train is None else resid_train.to(Q.dtype).to(Q.device)
+        E0[m] = R
+        E = E0
+        for _ in range(int(iters1)):
+            E = (1 - alpha1) * E0 + alpha1 * torch.sparse.mm(A, E)
+        if scale == 'auto':
+            sigma = R.abs().sum(1).mean()
+            sc = sigma / E.abs().sum(1).clamp_min(1e-12)
+            sc[m] = 0.0                                  # training rows are set by the smoothing step
+            Q = Q + sc.unsqueeze(1) * E
+        else:
+            Q = Q + float(scale) * E
+        Q = Q.clamp_min(0); Q = Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
+        stats['resid_l1'] = float(R.abs().sum(1).mean()); stats['moved'] = float((Q.argmax(1) != P.argmax(1)).double().mean())
+    G0 = Q.clone(); G0[m] = Y_train.to(Q.dtype)
+    G = G0
+    for _ in range(int(iters2)):
+        G = (1 - alpha2) * G0 + alpha2 * torch.sparse.mm(A, G)
+    G = G / G.sum(1, keepdim=True).clamp_min(1e-12)
+    return G, stats
+
+
 def match_entropy(P, target, iters=40):
     logp = P.clamp_min(1e-12).log()
     lo, hi = 1e-3, 1e3
