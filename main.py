@@ -141,6 +141,10 @@ else:
             Hc = posterior_feats(pf0 if Hc is None else Hc, P0, args.lam_p)
             print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
                   f'(lam={args.lam_p:g})')
+    if args.uvar_lambda > 0:
+        if P0 is None or not hasattr(data, 'val_mask'):
+            raise SystemExit('--uvar_lambda needs --bregman > 0 (teacher posteriors) and a validation split')
+        args._uvar = fit_uvar(P0, data.y, data.train_mask, data.val_mask, pf0, pool_mask(args, data, len(data.y), pf0.device), args.uvar_bins, seed=args.seed)
     pg = (data.edge_index, pool_mask(args, data, len(data.y), H_pool.device))
     h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc, graph=pg, P=P0)
     n_cand, args.budget = len(h), n_keep

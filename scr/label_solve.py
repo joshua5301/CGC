@@ -371,7 +371,7 @@ def _weiszfeld(H, assign, k, iters=30, eps=1e-9):
     return c, w / den[assign]
 
 
-def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30):
+def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30, uvar=None, lam=0.0):
     """Lloyd iterations for the Lipschitz objective  sum_j sum_{t in C_j} ||h_t - c_j|| / s  +  mu * KL(p_t || ybar_j):
     the unsquared feature distance is what the global-Lipschitz bound produces, so its optimal centre is the
     geometric median (Weiszfeld) instead of the mean; the label term is unchanged (mean posterior).
@@ -392,14 +392,25 @@ def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30):
         return c, yc.clamp_min(1e-12), w
     hc, yc, w = centres(assign)
     s = (H - hc[assign]).norm(dim=1).mean().clamp_min(1e-12)
+    use_u = uvar is not None and lam > 0
+    if use_u:
+        # label-estimation variance term (CE decomposition): the excess CE of cell j is ~ mean_{t in j} s_t, s_t = teacher error
+        # variance proxy; total = sum_j S_j / n_j. Marginal cost of putting t into j: (n_j s_t - S_j) / (n_j (n_j + 1)), scaled
+        # by the mean cell size so the term is O(1) like the distance and KL terms.
+        uv = uvar.to(H.device, H.dtype); nbar = N / k
     moved = 0
     for _ in range(iters):
         new = torch.empty_like(assign)
         logy = yc.log() if use_lab else None
+        if use_u:
+            n_j = torch.bincount(assign, minlength=k).to(H.dtype)
+            S_j = torch.zeros(k, dtype=H.dtype, device=H.device).index_add_(0, assign, uv)
         for i in range(0, N, chunk):
             cost = torch.cdist(H[i:i + chunk], hc) / s                          # b x k, unsquared
             if use_lab:
                 cost = cost + mu * (ent[i:i + chunk].unsqueeze(1) - P[i:i + chunk] @ logy.T)
+            if use_u:
+                cost = cost + lam * nbar * (n_j.unsqueeze(0) * uv[i:i + chunk].unsqueeze(1) - S_j.unsqueeze(0)) / (n_j.clamp_min(1) * (n_j + 1)).unsqueeze(0)
             new[i:i + chunk] = cost.argmin(1)
         moved = int((new != assign).sum())
         assign = new
@@ -655,7 +666,14 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
             print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
     if getattr(args, 'cluster_obj', 'l2') == 'l1':
         Pd = None if P is None else P.to(Hw.device)
-        assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0))
+        uv = getattr(args, '_uvar', None)
+        assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0),
+                                        uvar=uv, lam=getattr(args, 'uvar_lambda', 0.0))
+        if uv is not None and getattr(args, 'uvar_lambda', 0.0) > 0:
+            cnt_u = torch.bincount(assign.to(Hw.device), minlength=k).double()
+            S_u = torch.zeros(k, dtype=torch.float64, device=Hw.device).index_add_(0, assign.to(Hw.device), uv.to(Hw.device).double())
+            print(f'uvar: lambda {args.uvar_lambda:g}  sum_j mean s_j = {(S_u / cnt_u.clamp_min(1)).sum():.2f} (uniform cells would give {uv.sum().item() / (len(uv) / k):.2f})  '
+                  f'cell size min/med/max {int(cnt_u.min())}/{int(cnt_u.median())}/{int(cnt_u.max())}')
         assign = assign.cpu()
         print(f'l1: distance-sum objective, mu {getattr(args, "bregman", 0.0):g}  last sweep moved {moved} nodes')
         if getattr(args, 'sinkhorn', 0.0) > 0:
@@ -1124,6 +1142,37 @@ def averaging_diag(P, y, train_mask, eval_mask, H, sizes=(5, 10, 20, 40, 80), se
             row += f'{l1:.3f} / {kl:.3f} / {100 * acc:4.1f}   '
         l1n = (Pb - Yb).abs().sum(1).mean().item(); accn = (Pb.argmax(1) == y[idx]).double().mean().item()
         print(row + f'({l1n:.3f} / {100 * accn:.1f})')
+
+
+def fit_uvar(P, y, train_mask, val_mask, H, pool_mask, nbins=4, sizes=(5, 40), seed=0):
+    """Per-node teacher-error variance proxy s_t from the distance to the nearest training node in H:
+    val nodes are split into nbins distance quantiles; in each, groups of n = sizes[0] and sizes[1] similar nodes (k-means)
+    give KL(true mean || mean f); the variance coefficient V = (KL_small - KL_large) / (1/n_small - 1/n_large) (>= 0).
+    Every pool node gets s_t = V of its own distance bin, normalised to mean 1. Uses VAL labels only."""
+    from scr.utils import clustering_fast
+    dev = P.device; C = P.shape[1]
+    Ht = H.to(dev).float(); d = torch.cdist(Ht, Ht[train_mask.to(dev)]).min(1)[0]
+    vm = (val_mask & ~train_mask).to(dev); Y1 = F.one_hot(y.to(dev), C).double()
+    edges = torch.quantile(d[vm], torch.linspace(0, 1, nbins + 1, device=dev)[1:-1])
+    bin_of = lambda dd: torch.bucketize(dd, edges)
+    V = torch.zeros(nbins, dtype=torch.float64, device=dev)
+    for b in range(nbins):
+        idx = (vm & (bin_of(d) == b)).nonzero().squeeze(1)
+        kl = []
+        for n in sizes:
+            k = max(int(len(idx) // n), 1)
+            torch.manual_seed(seed)
+            a = torch.from_numpy(clustering_fast(Ht[idx].cpu().numpy().astype('float32'), k, 'kmeans')).long().to(dev) if k > 1 else torch.zeros(len(idx), dtype=torch.long, device=dev)
+            cnt = torch.bincount(a, minlength=k).double().clamp_min(1)
+            Fm = torch.zeros(k, C, dtype=torch.float64, device=dev).index_add_(0, a, P[idx]) / cnt.unsqueeze(1)
+            Ym = torch.zeros(k, C, dtype=torch.float64, device=dev).index_add_(0, a, Y1[idx]) / cnt.unsqueeze(1)
+            w = cnt / cnt.sum()
+            kl.append((w * (Ym * (Ym.clamp_min(1e-12).log() - Fm.clamp_min(1e-12).log())).sum(1)).sum().item())
+        V[b] = max((kl[0] - kl[1]) / (1.0 / sizes[0] - 1.0 / sizes[1]), 0.0)
+    s_pool = V[bin_of(d[pool_mask.to(dev)])]
+    s_pool = s_pool / s_pool.mean().clamp_min(1e-12)
+    print(f'uvar fit (val labels, {nbins} distance bins): V = {[round(v, 3) for v in V.tolist()]}  ->  s_t bins (mean 1) {[round(v, 2) for v in (V / V.mean().clamp_min(1e-12)).tolist()]}')
+    return s_pool
 
 
 def match_entropy(P, target, iters=40):
