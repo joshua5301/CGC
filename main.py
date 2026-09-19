@@ -57,21 +57,39 @@ else:
         pf0 = label_feats(args.label_feat, pool_d)
         HL0 = label_feats(args.label_feat, depths)[data.train_mask]
         YL0 = F.one_hot(data.y[data.train_mask], args.num_class).to(pf0.dtype)
+        prop_fn = None
+        if args.teacher_prop > 0:
+            # posterior propagation: the teacher's node posteriors are smoothed over the ORIGINAL graph before the KL
+            # refinement and the cell averaging (needs the pool = all nodes so rows line up with the adjacency)
+            if args.h_pool != 'all':
+                raise SystemExit('--teacher_prop needs --h_pool all')
+            adj_prop = normalize_adj_sparse(data).to(pf0.device)
+            seeds_p = F.one_hot(data.y[data.train_mask], args.num_class).double().to(pf0.device) if args.prop_seed else None
+            prop_fn = lambda P: propagate_posterior(P, adj_prop, args.teacher_prop, args.prop_alpha, seeds_p, data.train_mask.to(P.device))
+            def _prop_report(P, tag):
+                yd = data.y.to(P.device); pr = P.argmax(1)
+                acc = lambda m: (100 * (pr[m.to(P.device)] == yd[m.to(P.device)]).double().mean()).item()
+                print(f'teacher_prop[{tag}]: k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed}  '
+                      f'val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P):.3f}')
         early_teacher = None
         if args.refine_teacher == 'kernel' and args.label_mode == 'kernel_mean':
             # same teacher for the KL refinement and the labels: fit the kernel teacher now, reuse it below
             basis0 = pick_basis(pf0, args.expert_basis, args.basis_mode, args.seed)
             early_teacher = kernel_teacher(HL0, basis0, YL0, args.gamma, args.ce_steps, args.label_kernel,
                                            args.kernel_prior, args.kernel_bw, loss=args.teacher_loss, tol=args.probe_tol) + (basis0,)
-            P0 = F.softmax(early_teacher[0](pf0).double() / args.teacher_temp, dim=1)
+            P0 = F.softmax(early_teacher[0](pf0).double(), dim=1)
             print(f'refine teacher: kernel ({args.label_kernel}, basis {len(basis0)})')
         else:
             W0c = fit_probe_W(HL0, YL0, args.gamma, args.ce_steps, tol=args.probe_tol)[0]
             # same per-node temperature as the label teacher, otherwise a strongly regularised probe
             # (flat posteriors) silently switches the KL refinement off
-            P0 = F.softmax(pf0.double() @ W0c / args.teacher_temp, dim=1)
-            if args.teacher_ent > 0:
-                P0 = match_entropy(P0, args.teacher_ent)[0]
+            P0 = F.softmax(pf0.double() @ W0c, dim=1)
+        if prop_fn is not None:
+            _prop_report(P0, 'before'); P0 = prop_fn(P0); _prop_report(P0, 'refine')
+        if args.teacher_ent > 0:
+            P0 = match_entropy(P0, args.teacher_ent)[0]
+        elif args.teacher_temp != 1.0:
+            P0 = F.softmax(P0.clamp_min(1e-12).log() / args.teacher_temp, dim=1)
         if args.lam_p > 0:
             Hc = posterior_feats(pf0 if Hc is None else Hc, P0, args.lam_p)
             print(f'cluster space: {pf0.shape[1]}d feature + {P0.shape[1]}d posterior '
@@ -223,7 +241,8 @@ else:
             Y, ctx = solve_labels_kernel(H_fit, basis, T_fit, args.gamma, args.ce_steps,
                                          args.label_kernel, pf, assign, len(hl), sel,
                                          args.kernel_prior, args.kernel_bw, pre=None if pre is None else pre[:4],
-                                         temp=args.teacher_temp, ent=args.teacher_ent, loss=args.teacher_loss, tol=args.probe_tol)
+                                         temp=args.teacher_temp, ent=args.teacher_ent, loss=args.teacher_loss, tol=args.probe_tol,
+                                         post=locals().get('prop_fn'))
             ctx['basis'] = basis
         elif args.label_mode.startswith('logistic'):
             basis, n_cl = hl, 0

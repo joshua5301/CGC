@@ -139,6 +139,10 @@ def para():
     parser.add_argument('--resid_corr', type=float, default=0.0,
                         help='>0: add the shrunk mean out-of-fold teacher residual of the labelled members to each cell label (kappa)')
     parser.add_argument('--resid_folds', type=int, default=5)
+    parser.add_argument('--teacher_prop', type=int, default=0,
+                        help='>0: propagate the teacher posteriors k steps on the original graph (P <- (1-a) F + a A_hat P) before KL refinement and cell averaging')
+    parser.add_argument('--prop_alpha', type=float, default=0.5)
+    parser.add_argument('--prop_seed', type=int, default=0, help='1: training rows are clamped to their one-hot labels during the propagation (Correct-and-Smooth)')
     parser.add_argument('--sinkhorn', type=float, default=0.0,
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')
     parser.add_argument('--sk_iters', type=int, default=10, help='Lloyd rounds of --sinkhorn')

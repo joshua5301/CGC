@@ -941,6 +941,24 @@ def mean_entropy(P):
     return float(-(P * P.log()).sum(1).mean())
 
 
+def propagate_posterior(P, adj_norm, k, alpha, seeds=None, seed_mask=None):
+    """Label-propagation smoothing of teacher posteriors on the ORIGINAL graph (Correct-and-Smooth style):
+    P <- (1 - alpha) * F + alpha * A_hat P, k times, F = P with the training rows replaced by their one-hot labels
+    when seeds is given (those rows are re-clamped every step). Rows stay probability vectors."""
+    Fm = P.clone()
+    if seeds is not None:
+        Fm[seed_mask] = seeds.to(Fm.dtype)
+    A = adj_norm.to(P.device)
+    if A.dtype != P.dtype:
+        A = A.to(P.dtype)
+    Q = Fm
+    for _ in range(int(k)):
+        Q = (1 - alpha) * Fm + alpha * torch.sparse.mm(A, Q)
+        if seeds is not None:
+            Q[seed_mask] = seeds.to(Q.dtype)
+    return Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
+
+
 def match_entropy(P, target, iters=40):
     logp = P.clamp_min(1e-12).log()
     lo, hi = 1e-3, 1e3
@@ -1174,17 +1192,19 @@ def kernel_teacher(H_L, B, Y_L, gamma, steps=200, kind='erf', prior='rkhs', bw_m
 
 
 def solve_labels_kernel(H_L, B, Y_L, gamma, steps, kind, pool, assign, n_cl, sel=None, prior='rkhs',
-                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce', tol=1e-10):
+                        bw_mult=1.0, pre=None, temp=1.0, ent=0.0, loss='ce', tol=1e-10, post=None):
     """temp / ent: per-node sharpening of the teacher posteriors BEFORE cell averaging (gamma sets the teacher's
     accuracy; a strongly regularised teacher has small logits, i.e. flat posteriors, which starves the student).
     ent > 0: temperature matched so the mean posterior entropy is ent nats; else divide logits by temp."""
     pred, A, loss, gnorm = pre if pre is not None else kernel_teacher(H_L, B, Y_L, gamma, steps, kind, prior, bw_mult, loss=loss, tol=tol)
     P = F.softmax(pred(pool).double(), dim=1)
+    if post is not None:
+        P = post(P)                         # e.g. posterior propagation on the graph (before the temperature)
     ent0, T = mean_entropy(P), 1.0
     if ent > 0:
         P, T = match_entropy(P, ent)
     elif temp != 1.0:
-        P, T = F.softmax(pred(pool).double() / temp, dim=1), temp
+        P, T = F.softmax(P.clamp_min(1e-12).log() / temp, dim=1), temp
     if T != 1.0:
         print(f'teacher[kernel]: posterior entropy {ent0:.3f} -> {mean_entropy(P):.3f} nats at T={T:.3f} '
               f'(uniform = {math.log(P.shape[1]):.3f})')
