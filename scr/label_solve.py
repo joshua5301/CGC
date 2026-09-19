@@ -1082,6 +1082,41 @@ def label_distance_diag(P, y, train_mask, eval_mask, H, adj_norm, max_hop=4, tag
         print('   ' + l)
 
 
+def averaging_diag(P, y, train_mask, eval_mask, H, sizes=(5, 10, 20, 40, 80), seed=0):
+    """Bias vs variance of the teacher's error as a function of the distance to the nearest LABELLED node.
+    Eval nodes (val+test labels, diagnostic only) are split into quartiles of that distance; inside each quartile groups of
+    n similar nodes are formed by k-means (n = sizes) and the error of the group-mean posterior against the group's true label
+    mean is measured: L1 and KL(true || mean f). Variance decays ~ 1/sqrt(n) in L1; a floor that stays is bias."""
+    from scr.utils import clustering_fast
+    dev = P.device
+    y = y.to(dev); ev = (eval_mask & ~train_mask).to(dev)
+    Ht = H.to(dev).float(); d = torch.cdist(Ht, Ht[train_mask.to(dev)]).min(1)[0]
+    C = P.shape[1]; Y1 = F.one_hot(y, C).double()
+    qs = torch.quantile(d[ev], torch.tensor([0.25, 0.5, 0.75], device=dev))
+    bins = [(d <= qs[0]), (d > qs[0]) & (d <= qs[1]), (d > qs[1]) & (d <= qs[2]), (d > qs[2])]
+    print('averaging diag: error of the group-mean posterior vs the group true-label mean, by distance quartile x group size')
+    print('   ' + 'bin'.ljust(8) + ''.join(f'n={n:<3d} L1 / KL / acc   ' for n in sizes) + '(n=1: node-level L1 / acc)')
+    for bi, b in enumerate(bins):
+        m = ev & b
+        idx = m.nonzero().squeeze(1)
+        Pb, Yb, Hb = P[idx], Y1[idx], Ht[idx].cpu().numpy()
+        row = f'   Q{bi + 1} n={len(idx):<5d}'
+        for n in sizes:
+            k = max(int(len(idx) // n), 2)
+            torch.manual_seed(seed)
+            a = torch.from_numpy(clustering_fast(Hb.astype('float32'), k, 'kmeans')).long().to(dev)
+            cnt = torch.bincount(a, minlength=k).double().clamp_min(1)
+            Fm = torch.zeros(k, C, dtype=torch.float64, device=dev).index_add_(0, a, Pb) / cnt.unsqueeze(1)
+            Ym = torch.zeros(k, C, dtype=torch.float64, device=dev).index_add_(0, a, Yb) / cnt.unsqueeze(1)
+            w = cnt / cnt.sum()
+            l1 = (w * (Fm - Ym).abs().sum(1)).sum().item()
+            kl = (w * (Ym * (Ym.clamp_min(1e-12).log() - Fm.clamp_min(1e-12).log())).sum(1)).sum().item()
+            acc = (w * (Fm.argmax(1) == Ym.argmax(1)).double()).sum().item()
+            row += f'{l1:.3f} / {kl:.3f} / {100 * acc:4.1f}   '
+        l1n = (Pb - Yb).abs().sum(1).mean().item(); accn = (Pb.argmax(1) == y[idx]).double().mean().item()
+        print(row + f'({l1n:.3f} / {100 * accn:.1f})')
+
+
 def match_entropy(P, target, iters=40):
     logp = P.clamp_min(1e-12).log()
     lo, hi = 1e-3, 1e3
