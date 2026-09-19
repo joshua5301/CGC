@@ -47,7 +47,7 @@ def flags(g, mode):
     return f'--lp_mix {g} --lp_mode {mode} --lp_alpha {ALPHA} --lp_iters 50' if g > 0 else ''
 
 def teacher(gamma, g, mode):
-    cmd = f"python main.py {BASE} --ratio 0.026 --gamma {gamma} {flags(g, mode)} --teacher_only 1"
+    cmd = f"python main.py {BASE} --ratio 0.026 --gamma {gamma} --bregman 1 {flags(g, mode)} --teacher_only 1"   # bregman > 0: the refinement-teacher block (where lp_mix / teacher_only live) must run
     out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC'); out = out.stdout + out.stderr
     pr = dict((m[1], (float(m[2]), float(m[3]), float(m[4]))) for m in PAT_P.finditer(out))
     lp = PAT_L.search(out)
@@ -87,7 +87,7 @@ for (ratio, gamma, mu) in DENS:
     for g, mode in [(0.0, 'norm')] + list(itertools.product([0.1, 0.3, 0.5, 0.7, 1.0], MODES)):
         if not done(stage='teacher', gamma=gamma, g=g, mode=mode):
             teacher(gamma, g, mode)
-t = load(); t = t[t.stage == 'teacher']
+t = load(); assert len(t) and 'stage' in t.columns, 'no teacher rows logged (see FAIL lines)'; t = t[t.stage == 'teacher']
 print(t.pivot_table(index=['gamma', 'mode'], columns='g', values='t_test').round(2).to_string())
 print(t.pivot_table(index=['gamma', 'mode'], columns='g', values='t_val').round(2).to_string())
 
