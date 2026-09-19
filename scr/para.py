@@ -181,6 +181,11 @@ def para():
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')
     parser.add_argument('--sk_iters', type=int, default=10, help='Lloyd rounds of --sinkhorn')
     parser.add_argument('--sk_anneal', type=float, default=10.0, help='eps starts at anneal x --sinkhorn and decays geometrically to --sinkhorn')
+    parser.add_argument('--pool_drop_far', type=float, default=0.0,
+                        help='>0: remove this fraction of pool nodes farthest (feature distance) from any training node before condensation; budget unchanged')
+    parser.add_argument('--pool_drop_hop', type=int, default=0, help='>0: remove pool nodes at graph hop distance >= this from any training node')
+    parser.add_argument('--label_oracle_sel', type=str, default='all', choices=['all', 'far', 'near'], help='DIAGNOSTIC: apply --label_oracle to all cells, or only the far / near fraction')
+    parser.add_argument('--label_oracle_frac', type=float, default=0.25)
     parser.add_argument('--label_oracle', type=int, default=0,
                         help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],

@@ -423,8 +423,20 @@ else:
             print(f'group diag: KL(true||q) {kl_g:.4f}  L1 {l1_g:.4f}  argmax agree {100 * agree:.1f}%  '
                   f'H(true) {(w_g * ent(Yt)).sum():.3f}  H(q) {(w_g * ent(Y)).sum():.3f}  (n-weighted, {len(Y)} cells){node}')
             if args.label_oracle:
-                Y = Yt
-                print('label_oracle: condensed labels replaced by the TRUE cell compositions (diagnostic ceiling)')
+                if args.label_oracle_sel == 'all':
+                    Y = Yt
+                    print('label_oracle: condensed labels replaced by the TRUE cell compositions (diagnostic ceiling)')
+                else:
+                    # oracle labels only for the far (or near) fraction of cells, ranked by the mean distance of their members
+                    # to the nearest training node -> localises where the label-estimation error that matters sits
+                    d_o = label_distance(H_pool, tr_pool, None, 'feat').double().to(Y.device)
+                    cnt_o = torch.bincount(a_g, minlength=len(Y)).double().clamp_min(1)
+                    md = torch.zeros(len(Y), dtype=torch.float64, device=Y.device).index_add_(0, a_g, d_o) / cnt_o
+                    n_sel = max(int(round(args.label_oracle_frac * len(Y))), 1)
+                    sel_o = md.argsort(descending=(args.label_oracle_sel == 'far'))[:n_sel]
+                    Y = Y.clone(); Y[sel_o] = Yt[sel_o]
+                    print(f'label_oracle[{args.label_oracle_sel} {args.label_oracle_frac:.0%}]: true compositions for {n_sel}/{len(Y)} cells '
+                          f'holding {100 * cnt_o[sel_o].sum() / cnt_o.sum():.1f}% of the pool  (mean label distance {md[sel_o].mean():.3f} vs others {md[~torch.isin(torch.arange(len(Y), device=Y.device), sel_o)].mean():.3f})')
         label_cond = Y.float()
         if 'W' in ctx or 'dual' in ctx or 'kfun' in ctx:
             pred = ((H_all.double() @ ctx['W']) if 'W' in ctx

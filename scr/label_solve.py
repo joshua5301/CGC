@@ -112,6 +112,8 @@ def constrain(ctx, Y, prior, mode):
 
 
 def pool_mask(args, data, n, device):
+    if getattr(args, '_pool_keep', None) is not None:
+        return args._pool_keep.to(device)
     if args.h_pool == 'train':
         return data.train_mask
     if args.h_pool == 'all':
@@ -175,6 +177,28 @@ def commutation_residual(a_norm, h_d):
     return out
 
 
+def label_distance(H, train_mask, edge_index=None, mode='feat', chunk=2048, max_hop=20):
+    """Distance of every node to the nearest TRAINING (labelled) node: 'feat' = Euclidean distance in H (chunked),
+    'hop' = BFS hop count on edge_index (unreachable -> max_hop + 1)."""
+    dev = H.device; tm = train_mask.to(dev)
+    if mode == 'feat':
+        Ht = H.float(); T = Ht[tm]
+        d = torch.empty(len(Ht), dtype=torch.float32, device=dev)
+        for i in range(0, len(Ht), chunk):
+            d[i:i + chunk] = torch.cdist(Ht[i:i + chunk], T).min(1)[0]
+        return d
+    src, dst = edge_index[0].to(dev), edge_index[1].to(dev)
+    hop = torch.full((len(H),), max_hop + 1, dtype=torch.long, device=dev); hop[tm] = 0
+    frontier = tm.clone()
+    for k in range(1, max_hop + 1):
+        reach = torch.zeros(len(H), dtype=torch.bool, device=dev); reach[dst[frontier[src]]] = True
+        new = reach & (hop > max_hop)
+        if not new.any():
+            break
+        hop[new] = k; frontier = new
+    return hop.float()
+
+
 def select_pool(args, data, H, extra=()):
     if args.h_pool == 'train':
         mask = data.train_mask
@@ -186,6 +210,16 @@ def select_pool(args, data, H, extra=()):
             mask = torch.ones(len(H), dtype=torch.bool, device=H.device)
         else:
             mask = data.train_mask | ~(held | data.test_mask)
+    if getattr(args, 'pool_drop_far', 0.0) > 0 or getattr(args, 'pool_drop_hop', 0) > 0:
+        # nodes far from every labelled node (where the teacher is least accurate) leave the pool; budget unchanged
+        by_hop = getattr(args, 'pool_drop_hop', 0) > 0
+        d = label_distance(H, data.train_mask, data.edge_index, 'hop' if by_hop else 'feat')
+        far = (d >= args.pool_drop_hop) if by_hop else (d > torch.quantile(d[mask.to(d.device)], 1.0 - args.pool_drop_far))
+        far = far.to(mask.device) & ~data.train_mask.to(mask.device)
+        n0 = int(mask.sum()); mask = mask & ~far
+        args._pool_keep = mask
+        print(f'pool drop: ' + (f'hop >= {args.pool_drop_hop}' if by_hop else f'farthest {args.pool_drop_far:.0%} in feature distance') +
+              f' -> {n0 - int(mask.sum())} nodes removed, pool {int(mask.sum())}/{len(H)} (budget {int(args.budget)} unchanged)')
     return H[mask], data.y[mask], data.train_mask[mask], [E[mask] for E in extra]
 
 
