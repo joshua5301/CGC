@@ -145,6 +145,10 @@ else:
         if P0 is None or not hasattr(data, 'val_mask'):
             raise SystemExit('--uvar_lambda needs --bregman > 0 (teacher posteriors) and a validation split')
         args._uvar = fit_uvar(P0, data.y, data.train_mask, data.val_mask, pf0, pool_mask(args, data, len(data.y), pf0.device), args.uvar_bins, seed=args.seed)
+    if args.merge_lambda > 0:
+        if P0 is None or args.cluster_obj != 'l1':
+            raise SystemExit('--merge_lambda needs --bregman > 0 (teacher posteriors) and --cluster_obj l1')
+        args._merge_u = merge_uncertainty(args.merge_u, pf0, data.train_mask, pool_mask(args, data, len(data.y), pf0.device))
     pg = (data.edge_index, pool_mask(args, data, len(data.y), H_pool.device))
     h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc, graph=pg, P=P0)
     n_cand, args.budget = len(h), n_keep

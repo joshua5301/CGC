@@ -172,6 +172,10 @@ def para():
     parser.add_argument('--uvar_lambda', type=float, default=0.0,
                         help='>0: label-estimation variance term in the l1 partition (sum_j mean_{t in j} s_t, s_t = teacher-error variance proxy from the distance to labels, fitted on val)')
     parser.add_argument('--uvar_bins', type=int, default=4)
+    parser.add_argument('--merge_lambda', type=float, default=0.0,
+                        help='>0: after the l1 partition, greedily merge cell pairs while DeltaJ0 + lambda * nbar * DeltaU < 0, U = sum_j mean_{t in j} u_t (final cells <= budget)')
+    parser.add_argument('--merge_u', type=str, default='dist', choices=['const', 'dist'], help='u_t: const (control) or distance to the nearest training node')
+    parser.add_argument('--merge_knn', type=int, default=5, help='candidate pairs: each centre with its knn nearest centres')
     parser.add_argument('--teacher_only', type=int, default=0, help='1: fit the (refinement) teacher, print its val/test accuracy and exit')
     parser.add_argument('--sinkhorn', type=float, default=0.0,
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')

@@ -687,6 +687,14 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
             w = _weiszfeld(Hw, assign, k)[1]
             assign = assign.cpu()
             print(f'balanced (after l1): cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
+        if getattr(args, 'merge_lambda', 0.0) > 0:
+            k0 = int((torch.bincount(assign, minlength=k) > 0).sum())
+            assign, w, k1, n_m, (j0a, ua), (j0b, ub) = merge_cells(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0),
+                                                                  args._merge_u, args.merge_lambda, args.merge_knn)
+            cnt_m = torch.bincount(assign, minlength=k); cnt_m = cnt_m[cnt_m > 0]
+            assign = assign.cpu()
+            print(f'merge: lambda {args.merge_lambda:g} u {args.merge_u} knn {args.merge_knn}  cells {k0} -> {k1} ({n_m} merges)  '
+                  f'J0 {j0a:.1f} -> {j0b:.1f}  U {ua:.1f} -> {ub:.1f}  cell size min/med/max {int(cnt_m.min())}/{int(cnt_m.median())}/{int(cnt_m.max())}')
         h, remap = _cluster_wmeans(H_pool, assign, k, w.to(H_pool.dtype))
         return h, remap, [_cluster_wmeans(E, assign, k, w.to(E.dtype))[0] for E in extra]
     if getattr(args, 'bregman', 0.0) > 0 and P is not None:
@@ -1173,6 +1181,112 @@ def fit_uvar(P, y, train_mask, val_mask, H, pool_mask, nbins=4, sizes=(5, 40), s
     s_pool = s_pool / s_pool.mean().clamp_min(1e-12)
     print(f'uvar fit (val labels, {nbins} distance bins): V = {[round(v, 3) for v in V.tolist()]}  ->  s_t bins (mean 1) {[round(v, 2) for v in (V / V.mean().clamp_min(1e-12)).tolist()]}')
     return s_pool
+
+
+def merge_uncertainty(mode, H, train_mask, pool_mask):
+    """Per-node label-uncertainty proxy u_t (mean 1 over the pool) for merge_cells:
+    'const' = 1 (merging is then plain J0-greedy agglomeration, the control), 'dist' = distance in H to the nearest
+    training node (the teacher's error grows with it)."""
+    Ht = H.float(); pm = pool_mask.to(Ht.device)
+    if mode == 'const':
+        return torch.ones(int(pm.sum()), dtype=torch.float64, device=Ht.device)
+    if mode == 'dist':
+        d = torch.cdist(Ht[pm], Ht[train_mask.to(Ht.device)]).min(1)[0].double()
+        return d / d.mean().clamp_min(1e-12)
+    raise SystemExit(f'unknown --merge_u {mode}')
+
+
+def merge_cells(H, P, assign, k, mu, u, lam, knn=5, w_iters=30, eps=1e-9):
+    """Post-hoc merging of the cells of the l1 partition under the surrogate
+        J~ = sum_j [ sum_{t in j} ||h_t - c_j|| / s + mu sum_{t in j} KL(f_t || q_j) ]  +  lam * nbar * sum_j S_j / n_j,
+    S_j = sum_{t in j} u_t (u_t = label-uncertainty proxy, mean 1), nbar = N / k, s = mean distance to the cell medians of the
+    input partition. Candidates are the knn nearest centre pairs; the pair with the most negative
+        Delta = DeltaJ0 + lam * nbar * DeltaU
+    is merged (its centre = geometric median of the union, its label = the size-weighted mean, exactly) until no pair improves.
+    DeltaU = S_ab/n_ab - S_a/n_a - S_b/n_b < 0 always; DeltaJ0 = distance increase + mu [n_a KL(q_a||q_ab) + n_b KL(q_b||q_ab)] >= 0.
+    Returns (assign with empty ids, Weiszfeld weights, cells alive, merges, (J0, U) before, (J0, U) after)."""
+    H = H.double(); assign = assign.clone().to(H.device); N = len(H); dev = H.device
+    use_lab = P is not None and mu > 0
+    u = u.to(dev).double()
+    c, _ = _weiszfeld(H, assign, k, w_iters)
+    s = (H - c[assign]).norm(dim=1).mean().clamp_min(1e-12)
+    nbar = N / k
+    members = [(assign == j).nonzero().squeeze(1) for j in range(k)]
+    n = torch.bincount(assign, minlength=k).double()
+    alive = n > 0
+    S = torch.zeros(k, dtype=torch.float64, device=dev).index_add_(0, assign, u)
+    D = torch.zeros(k, dtype=torch.float64, device=dev).index_add_(0, assign, (H - c[assign]).norm(dim=1))
+    if use_lab:
+        P = P.double().clamp_min(1e-12)
+        sp = torch.zeros(k, P.shape[1], dtype=torch.float64, device=dev).index_add_(0, assign, P)
+        ent_tot = (P * P.log()).sum()
+
+    def J0():
+        v = D[alive].sum() / s
+        if use_lab:
+            q = (sp[alive] / n[alive].unsqueeze(1)).clamp_min(1e-12)
+            v = v + mu * (ent_tot - (sp[alive] * q.log()).sum())
+        return float(v)
+
+    def U():
+        return float((S[alive] / n[alive]).sum())
+
+    def gmed(idx):
+        X = H[idx]; cc = X.mean(0)
+        for _ in range(w_iters):
+            w = 1.0 / (X - cc).norm(dim=1).clamp_min(eps)
+            cc = (w.unsqueeze(1) * X).sum(0) / w.sum()
+        return cc, (X - cc).norm(dim=1).sum()
+
+    def delta(a, b):
+        cab, Dab = gmed(torch.cat([members[a], members[b]]))
+        dJ = (Dab - D[a] - D[b]) / s
+        if use_lab:
+            qa, qb, qab = sp[a] / n[a], sp[b] / n[b], (sp[a] + sp[b]) / (n[a] + n[b])
+            dJ = dJ + mu * (n[a] * (qa * (qa.log() - qab.log())).sum() + n[b] * (qb * (qb.log() - qab.log())).sum())
+        dU = (S[a] + S[b]) / (n[a] + n[b]) - S[a] / n[a] - S[b] / n[b]
+        return float(dJ + lam * nbar * dU), cab, Dab
+
+    def nn_lists():
+        Dm = torch.cdist(c, c); Dm[~alive] = float('inf'); Dm[:, ~alive] = float('inf'); Dm.fill_diagonal_(float('inf'))
+        kk = min(knn, int(alive.sum()) - 1)
+        return Dm.topk(kk, dim=1, largest=False)[1] if kk > 0 else None
+
+    def pairs_of(a):
+        nn = nn_lists()
+        if nn is None:
+            return []
+        out = {(min(a, int(b)), max(a, int(b))) for b in nn[a]}
+        out |= {(min(a, int(x)), max(a, int(x))) for x in (nn == a).any(1).nonzero().squeeze(1) if alive[x]}
+        return [pq for pq in out if pq[0] != pq[1]]
+
+    j0_before, u_before = J0(), U()
+    cand = {}
+    nn = nn_lists()
+    if nn is not None:
+        for a in alive.nonzero().squeeze(1).tolist():
+            for b in nn[a].tolist():
+                key = (min(a, b), max(a, b))
+                if key not in cand:
+                    cand[key] = delta(*key)
+    merges = 0
+    while cand and int(alive.sum()) > 2:
+        key = min(cand, key=lambda kk: cand[kk][0])
+        dval, cab, Dab = cand[key]
+        if dval >= 0:
+            break
+        a, b = key
+        members[a] = torch.cat([members[a], members[b]]); members[b] = members[b][:0]
+        assign[members[a]] = a
+        n[a] += n[b]; S[a] += S[b]; D[a] = Dab; c[a] = cab
+        if use_lab:
+            sp[a] += sp[b]
+        n[b] = 0; alive[b] = False; merges += 1
+        cand = {kk: v for kk, v in cand.items() if a not in kk and b not in kk}
+        for key2 in pairs_of(a):
+            cand[key2] = delta(*key2)
+    w = _weiszfeld(H, assign, k, w_iters)[1]
+    return assign, w, int(alive.sum()), merges, (j0_before, u_before), (J0(), U())
 
 
 def match_entropy(P, target, iters=40):
