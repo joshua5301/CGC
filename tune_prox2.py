@@ -1,7 +1,7 @@
-# ============ Cell 1: common (citeseer 3.6%; SESSION = 'A' gamma {1, 3} | 'B' gamma {10} | 'C' gamma {30}) =============
+# ============ Cell 1: common (citeseer 3.6%; SESSION = 'A' mu 0.2 | 'B' mu 0.5 | 'C' mu 1) =============
 # Full sweep of the proximity weights (--prox_tau, no floor) jointly with the axes they could interact with:
 #   gamma (teacher accuracy / direction) x mu (KL term) x tau (proximity weight) x T (label scale)
-#   = {1, 3, 10, 30} x {0.2, 1} x {0, 2, 1, 0.5} x {2, 1, 0.5, 0.25}      = 128 condensations over the three sessions
+#   = {1, 3, 10, 30} x {0.2, 0.5, 1} x {0, 2, 1, 0.5} x {2, 1, 0.5, 0.25}   = 192 condensations, 64 per session (one mu each)
 # fixed: erf, fn 1, raw, basis 3000, depth 2, lr 0.01; dropout {0,...,.9} x wd {5e-4, 5e-3} on val, repeat 3.
 # tau 0 rows = the plain cell mean, so "does opening tau raise the val-best" is read inside one grid.
 SESSION = 'A'
@@ -22,8 +22,9 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
         "--label_mode kernel_mean --kernel_prior rkhs --cluster_obj l1 --cluster_feat last --expert_basis 3000 "
         "--label_kernel erf --feat_norm 1 --conv_depth 2 --no_hyperpara 1 --lr 0.01 --epoch 1000 --eval_every 10 "
         "--dropout 0.5 --weight_decay 5e-4 --dataset_name citeseer --ratio 0.036")
-GAMMAS = {'A': [1.0, 3.0], 'B': [10.0], 'C': [30.0]}[SESSION]
-MUS, TAUS, TEMPS = [0.2, 1.0], [0.0, 2.0, 1.0, 0.5], [2.0, 1.0, 0.5, 0.25]
+GAMMAS = [1.0, 3.0, 10.0, 30.0]
+MUS = {'A': [0.2], 'B': [0.5], 'C': [1.0]}[SESSION]
+TAUS, TEMPS = [0.0, 2.0, 1.0, 0.5], [2.0, 1.0, 0.5, 0.25]
 DOWN = '0,0.1,0.3,0.5,0.7,0.9;5e-4,5e-3'
 REPEAT = 3
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+)(?: lr=([\d.e-]+))?: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
