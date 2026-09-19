@@ -1,8 +1,8 @@
-# ============ Cell 1: common (SESSION = 'all' | 'A' arxiv | 'B' reddit + flickr) =============
+# ============ Cell 1: common (single session) =============
 # Nystrom basis of the kernel teacher: k-means centroids of the pool (new default, --basis_mode kmeans) vs uniformly
-# sampled rows (legacy, --basis_mode random). Paired at the main-table condensation of the large graphs, where the basis
-# (3000) is a real subsample; on cora / citeseer 3000 >= N so the two coincide. Teacher accuracy + student, repeat 5.
-SESSION = 'all'
+# sampled rows (legacy, --basis_mode random), paired at the ax1 val-best condensation of each arxiv density (raw space,
+# recipe fixed to the selected dropout, repeat 10, condensation seeds 0 and 1). On cora / citeseer 3000 >= N so the two coincide.
+SESSION = 'A'
 import subprocess, re, json, os, time, glob
 import pandas as pd
 from google.colab import drive
@@ -17,18 +17,16 @@ assert subprocess.run('grep -c basis_mode /content/CGC/scr/para.py', shell=True,
 
 BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kmeans "
         "--landmark kmeans --h_pool all --ce_steps 1000 --probe_tol 1e-6 --head ce "
-        "--label_mode kernel_mean --kernel_prior rkhs --cluster_obj l1 --expert_basis 3000 --nngp_basis 3000 "
-        "--conv_depth 2 --no_hyperpara 1 --lr 0.01 --epoch 1000 --eval_every 10 --dropout 0.5 --weight_decay 5e-4")
-#          ds         ratio   kernel  space   fn gamma  mu   T      (final5 val-best)
-CELLS = {'A': [('arxiv',   0.0025, 'erf',   'nngp', 0, 1e-4, 0.3, 1.0),
-               ('arxiv',   0.0005, 'erf',   'nngp', 0, 1e-3, 1.0, 0.25)],
-         'B': [('reddit',  0.001,  'erf',   'last', 0, 1e-4, 1.0, 1.0),
-               ('flickr',  0.005,  'relu1', 'last', 1, 0.1,  0.3, 1.0)]}
-CELLS = CELLS['A'] + CELLS['B'] if SESSION == 'all' else CELLS[SESSION]
+        "--label_mode kernel_mean --kernel_prior rkhs --cluster_obj l1 --cluster_feat last --expert_basis 3000 "
+        "--conv_depth 2 --feat_norm 0 --no_hyperpara 1 --lr 0.01 --epoch 1000 --eval_every 10 --weight_decay 5e-4")
+#          ds        ratio   kernel   gamma  mu   T     dropout     (ax1 val-best per density, raw space)
+CELLS = {'A': [('arxiv',  0.0005, 'erf',   1e-3, 0.5, 0.25, 0.7),
+               ('arxiv',  0.0025, 'relu1', 1e-4, 0.2, 0.25, 0.3),
+               ('arxiv',  0.005,  'erf',   1e-3, 0.5, 1.0,  0.1)]}
+CELLS = CELLS['A']
 MODES = ['kmeans', 'random']
 SEEDS = [0, 1]
-DOWN = '0,0.1,0.3,0.5,0.7;5e-4'
-REPEAT = 5
+REPEAT = 10
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+)(?: lr=([\d.e-]+))?: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 
 def load():
@@ -39,10 +37,10 @@ def done(ds, r, mode, seed):
     df = load()
     return len(df) > 0 and ((df.ds == ds) & (df.ratio == r) & (df['mode'] == mode) & (df.seed == seed)).any()
 
-def run(ds, r, kernel, space, fn, gamma, mu, temp, mode, seed):
-    cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} --cluster_feat {space} "
-           f"--feat_norm {fn} --gamma {gamma} --bregman {mu} --teacher_temp {temp} --basis_mode {mode} --seed {seed} "
-           f"--repeat {REPEAT} --down_grid '{DOWN}'")
+def run(ds, r, kernel, gamma, mu, temp, do, mode, seed):
+    cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} "
+           f"--gamma {gamma} --bregman {mu} --teacher_temp {temp} --basis_mode {mode} --seed {seed} "
+           f"--repeat {REPEAT} --down_grid '{do:g};5e-4'")
     t = time.time()
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC')
     out = p.stdout + p.stderr
@@ -54,7 +52,7 @@ def run(ds, r, kernel, space, fn, gamma, mu, temp, mode, seed):
     lo = re.search(r'loss: ([\d.]+)  gnorm', out)
     with open(LOG, 'a') as f:
         for do_, wd_, lr_, te, sd, va in rows:
-            f.write(json.dumps(dict(ds=ds, ratio=r, mode=mode, seed=seed, kernel=kernel, space=space, gamma=gamma, mu=mu, temp=temp,
+            f.write(json.dumps(dict(ds=ds, ratio=r, mode=mode, seed=seed, kernel=kernel, gamma=gamma, mu=mu, temp=temp,
                                     drop=float(do_), wd=float(wd_), repeat=REPEAT, test=float(te), std=float(sd), val=float(va),
                                     t_train=float(ex[1]) if ex else None, t_test=float(ex[3]) if ex and ex[3] else None,
                                     t_loss=float(lo[1]) if lo else None, cond_s=ct)) + '\n')
@@ -65,16 +63,16 @@ def run(ds, r, kernel, space, fn, gamma, mu, temp, mode, seed):
 print(f'{SESSION}: {[(c[0], c[1]) for c in CELLS]}  modes {MODES} x seeds {SEEDS}')
 
 # ============ Cell 2: run (done() resumes) =============
-for ds, r, kernel, space, fn, gamma, mu, temp in CELLS:
+for ds, r, kernel, gamma, mu, temp, do in CELLS:
     for mode in MODES:
         for seed in SEEDS:
             if not done(ds, r, mode, seed):
-                run(ds, r, kernel, space, fn, gamma, mu, temp, mode, seed)
+                run(ds, r, kernel, gamma, mu, temp, do, mode, seed)
 
 # ============ Cell 3: table (run where all basis1_*.jsonl are present) =============
 df = load(); assert len(df), 'no logs'
 b = df.sort_values('val', ascending=False).groupby(['ds', 'ratio', 'mode', 'seed']).head(1)
-print('##### student test per (ds, ratio) x basis mode   [val-selected dropout, repeat 5; mean over condensation seeds 0, 1]')
+print('##### student test per (ds, ratio) x basis mode   [ax1 recipe, repeat 10; mean/min/max over condensation seeds 0, 1]')
 print(b.pivot_table(index=['ds', 'ratio'], columns='mode', values='test', aggfunc=['mean', 'min', 'max']).round(2).to_string())
 print('\n##### teacher test accuracy (train on inductive graphs) per (ds, ratio) x basis mode, mean over seeds')
 t = b.assign(t=b.t_test.fillna(b.t_train)).pivot_table(index=['ds', 'ratio'], columns='mode', values='t', aggfunc=['mean', 'min', 'max']).round(2)
