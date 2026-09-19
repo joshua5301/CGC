@@ -66,21 +66,21 @@ else:
             adj_prop = normalize_adj_sparse(data).to(pf0.device)
             seeds_p = F.one_hot(data.y[data.train_mask], args.num_class).double().to(pf0.device) if args.prop_seed else None
             prop_fn = lambda P: propagate_posterior(P, adj_prop, args.teacher_prop, args.prop_alpha, seeds_p, data.train_mask.to(P.device))
-        if args.cs_smooth_iters > 0:
+        if args.tcs_smooth_iters > 0:
             # full Correct & Smooth on the teacher posteriors (kernel teacher when --refine_teacher kernel); residuals of the
             # Correct step are out-of-fold (the in-sample residuals of the kernel teacher are ~0) unless --cs_resid insample
             if args.h_pool != 'all':
                 raise SystemExit('--cs_smooth_iters needs --h_pool all')
             adj_prop = normalize_adj_sparse(data).to(pf0.device)
             R_cs = None
-            if args.cs_correct and args.cs_resid == 'oof':
+            if args.tcs_correct and args.tcs_resid == 'oof':
                 basis_cs = pick_basis(pf0, args.expert_basis, args.basis_mode, args.seed)
                 R_cs, acc_oof = oof_residuals(HL0, basis_cs, YL0, args.gamma, args.ce_steps, args.label_kernel, args.kernel_prior,
-                                              args.kernel_bw, args.teacher_loss, args.probe_tol, 1.0, args.cs_folds, args.seed)
-                print(f'C&S: {args.cs_folds}-fold OOF teacher acc on train {100 * acc_oof:.2f}%  mean |resid|_1 {R_cs.abs().sum(1).mean():.3f}')
+                                              args.kernel_bw, args.teacher_loss, args.probe_tol, 1.0, args.tcs_folds, args.seed)
+                print(f'C&S: {args.tcs_folds}-fold OOF teacher acc on train {100 * acc_oof:.2f}%  mean |resid|_1 {R_cs.abs().sum(1).mean():.3f}')
             def prop_fn(P, _R=R_cs):
-                G, st_ = correct_and_smooth(P, adj_prop, data.train_mask, YL0.double(), _R, bool(args.cs_correct), args.cs_alpha1, args.cs_iters,
-                                            args.cs_scale, args.cs_alpha2, args.cs_smooth_iters)
+                G, st_ = correct_and_smooth(P, adj_prop, data.train_mask, YL0.double(), _R, bool(args.tcs_correct), args.tcs_alpha1, args.tcs_iters,
+                                            args.tcs_scale, args.tcs_alpha2, args.tcs_smooth_iters)
                 if st_:
                     print(f"C&S correct: argmax changed on {100 * st_['moved']:.1f}% of nodes")
                 return G
@@ -88,7 +88,7 @@ else:
             def _prop_report(P, tag):
                 yd = data.y.to(P.device); pr = P.argmax(1)
                 acc = lambda m: (100 * (pr[m.to(P.device)] == yd[m.to(P.device)]).double().mean()).item()
-                print(f'teacher_prop[{tag}]: ' + (f'C&S correct={args.cs_correct} a1={args.cs_alpha1:g}x{args.cs_iters} a2={args.cs_alpha2:g}x{args.cs_smooth_iters} ' if args.cs_smooth_iters > 0 else f'k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed} ')
+                print(f'teacher_prop[{tag}]: ' + (f'C&S correct={args.tcs_correct} a1={args.tcs_alpha1:g}x{args.tcs_iters} a2={args.tcs_alpha2:g}x{args.tcs_smooth_iters} ' if args.tcs_smooth_iters > 0 else f'k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed} ')
                       + f' val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P):.3f}  (P0 = {args.refine_teacher} teacher)')
         early_teacher = None
         if args.refine_teacher == 'kernel' and args.label_mode == 'kernel_mean':

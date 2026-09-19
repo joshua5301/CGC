@@ -13,7 +13,7 @@ TAG = 'cs2'
 LOG = f'{LOGDIR}/{TAG}_{SESSION}.jsonl'
 pd.set_option('display.width', 250)
 subprocess.run('git -C /content/CGC pull', shell=True)
-assert subprocess.run('grep -c cs_smooth_iters /content/CGC/scr/para.py', shell=True,
+assert subprocess.run('grep -c tcs_smooth_iters /content/CGC/scr/para.py', shell=True,
                       capture_output=True, text=True).stdout.strip() not in ('', '0'), 'Colab checkout is stale'
 
 BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kmeans "
@@ -25,12 +25,12 @@ CELLS = {'C1': [(0.013, 'relu1', 0.1, 1.0)], 'C2': [(0.026, 'relu1', 1.0, 5.0)],
 CELLS = CELLS['C1'] + CELLS['C2'] + CELLS['C3'] if SESSION == 'all' else CELLS[SESSION]
 #           name            flags                                                              T
 VARIANTS = [('none',        '',                                                               1.0),
-            ('C&S full',    '--cs_smooth_iters 50 --cs_correct 1 --cs_resid oof',             1.0),
-            ('C&S full T.5','--cs_smooth_iters 50 --cs_correct 1 --cs_resid oof',             0.5),
-            ('C&S a.5',     '--cs_smooth_iters 50 --cs_correct 1 --cs_resid oof --cs_alpha1 0.5 --cs_alpha2 0.5', 1.0),
-            ('smooth only', '--cs_smooth_iters 50 --cs_correct 0',                            1.0),
-            ('correct only','--cs_smooth_iters 1 --cs_correct 1 --cs_resid oof --cs_alpha2 0', 1.0),
-            ('insample',    '--cs_smooth_iters 50 --cs_correct 1 --cs_resid insample',        1.0)]
+            ('C&S full',    '--tcs_smooth_iters 50 --tcs_correct 1 --tcs_resid oof',             1.0),
+            ('C&S full T.5','--tcs_smooth_iters 50 --tcs_correct 1 --tcs_resid oof',             0.5),
+            ('C&S a.5',     '--tcs_smooth_iters 50 --tcs_correct 1 --tcs_resid oof --tcs_alpha1 0.5 --tcs_alpha2 0.5', 1.0),
+            ('smooth only', '--tcs_smooth_iters 50 --tcs_correct 0',                            1.0),
+            ('correct only','--tcs_smooth_iters 1 --tcs_correct 1 --tcs_resid oof --tcs_alpha2 0', 1.0),
+            ('insample',    '--tcs_smooth_iters 50 --tcs_correct 1 --tcs_resid insample',        1.0)]
 DOWN = '0,0.1,0.3,0.5,0.7,0.9;5e-4'
 REPEAT = 5
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+)(?: lr=([\d.e-]+))?: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
