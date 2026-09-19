@@ -64,24 +64,25 @@ def teacher(kernel, gamma, fn, cs='', tag='stage1'):
           + (f"  (before {rec['t_val0']:.2f}/{rec['t_test0']:.2f}, moved {rec['moved']}%)" if cs else ''))
     return rec
 
-def student(ratio, mu, kernel, gamma, fn, cs, name):
+def student(ratio, mu, kernel, gamma, fn, cs, name, temp=1.0):
     cmd = (f"python main.py {BASE} --ratio {ratio} --bregman {mu} --label_kernel {kernel} --gamma {gamma} --feat_norm {fn} {cs} "
-           f"--repeat {REPEAT} --down_grid '{DOWN}'")
+           f"--teacher_temp {temp} --repeat {REPEAT} --down_grid '{DOWN}'")
     t = time.time()
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC')
     out = p.stdout + p.stderr
     rows = PAT_D.findall(out); g = PAT_G.search(out)
     if not rows or not g:
-        print('FAIL', ratio, name, '\n', out[-2000:]); return
+        print('FAIL', ratio, name, temp, chr(10), out[-2000:]); return
     pr = dict((m[1], (float(m[2]), float(m[3]), float(m[4]))) for m in PAT_P.finditer(out))
-    ta = pr.get('refine', (None, None, None))
+    ex = re.search(r'expert: train ([\d.]+)%\s+val ([\d.]+)%\s+test ([\d.]+)', out)
+    ta = pr.get('refine', (float(ex[2]), float(ex[3]), float('nan')) if ex else (None, None, None))
     with open(LOG, 'a') as f:
         for do_, wd_, lr_, te, sdv, va in rows:
-            f.write(json.dumps(dict(stage='student', ratio=ratio, mu=mu, kernel=kernel, gamma=gamma, fn=fn, cs=cs, variant=name,
+            f.write(json.dumps(dict(stage='student', ratio=ratio, mu=mu, kernel=kernel, gamma=gamma, fn=fn, cs=cs, variant=name, temp=temp,
                                     drop=float(do_), wd=float(wd_), repeat=REPEAT, test=float(te), std=float(sdv), val=float(va),
-                                    t_val=ta[0], t_test=ta[1], h_t=ta[2], kl_g=float(g[1]), agree=float(g[2]), h_q=float(g[4]))) + '\n')
+                                    t_val=ta[0], t_test=ta[1], h_t=ta[2], kl_g=float(g[1]), agree=float(g[2]), h_q=float(g[4]))) + chr(10))
     best = max(rows, key=lambda x: float(x[5]))
-    print(f"cora {ratio:<6g} {name:12s} teacher val/test {ta[0]}/{ta[1]}  agree {g[2]}%  H(q) {g[4]}  "
+    print(f"cora {ratio:<6g} {name:12s} T={temp:<4g} teacher val/test {ta[0]}/{ta[1]}  agree {g[2]}%  H(q) {g[4]}  "
           f"val {best[5]} (do={best[0]}) test {best[3]}±{best[4]}  ({round(time.time() - t)}s)")
 
 print('cs3: naive C&S on cora, teacher-val selection')
@@ -118,19 +119,25 @@ print(f"--> C&S: {cb.cs}  teacher val {cb.t_val:.2f} test {cb.t_test:.2f}")
 
 # ============ Cell 4: stage 3 - students with {X teacher, + Smooth, + C&S} at three densities =============
 VAR = [('X teacher', ''), ('X + smooth', sm.cs), ('X + C&S', cb.cs)]
-for (ratio, mu), (name, cs) in itertools.product(DENS, VAR):
-    if not done(stage='student', ratio=ratio, variant=name):
-        student(ratio, mu, K, G, FN, cs, name)
+TEMPS = [1.0, 0.5, 0.25, 0.1]           # the converged propagation is nearly uniform (H ~ 1.8 of log 7 = 1.95): the labels need sharpening
+for (ratio, mu), (name, cs), temp in itertools.product(DENS, VAR, TEMPS):
+    if not done(stage='student', ratio=ratio, variant=name, temp=temp):
+        student(ratio, mu, K, G, FN, cs, name, temp)
 
 # ============ Cell 5: tables =============
 df = load()
-b = df[df.stage == 'student'].sort_values('val', ascending=False).groupby(['ratio', 'variant']).head(1)
-b = b.assign(cell=b.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f}", axis=1))
+st = df[df.stage == 'student'].copy(); st['temp'] = st['temp'].fillna(1.0) if 'temp' in st.columns else 1.0
 order = [v[0] for v in VAR]
 print(f'##### X teacher = {K} gamma {G:g} fn {FN};  Smooth = {sm.cs};  C&S = {cb.cs}')
-print('\n##### student test per ratio x variant   [val-selected dropout, wd 5e-4, repeat 5]   (H-teacher reference: 83.9 / 84.6 / 83.5)')
-print(b.pivot_table(index='ratio', columns='variant', values='cell', aggfunc='first')[order].to_string())
+bt = st.sort_values('val', ascending=False).groupby(['ratio', 'variant', 'temp']).head(1)
+bt = bt.assign(cell=bt.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f}", axis=1))
+print('##### student test per (ratio, T) x variant   [val-selected dropout, wd 5e-4, repeat 5]   (H-teacher reference: 83.9 / 84.6 / 83.5)')
+print(bt.pivot_table(index=['ratio', 'temp'], columns='variant', values='cell', aggfunc='first').reindex(columns=order).to_string())
+b = st.sort_values('val', ascending=False).groupby(['ratio', 'variant']).head(1)
+b = b.assign(cell=b.apply(lambda x: f"{x['test']:.1f}+-{x['std']:.1f} (T{x['temp']:g})", axis=1))
+print('##### student test per ratio x variant, T selected on val')
+print(b.pivot_table(index='ratio', columns='variant', values='cell', aggfunc='first').reindex(columns=order).to_string())
 for m, title in [('t_test', 'teacher test accuracy (H-teacher reference 82.4 / 82.1 / 82.1)'), ('t_val', 'teacher val accuracy'),
-                 ('agree', 'cell argmax agreement [%]'), ('h_q', 'H(q)')]:
-    print(f'\n##### {title}')
-    print(b.pivot_table(index='ratio', columns='variant', values=m, aggfunc='first')[order].round(3).to_string())
+                 ('agree', 'cell argmax agreement [%] (T selected)'), ('h_q', 'H(q) (T selected)')]:
+    print('##### ' + title)
+    print(b.pivot_table(index='ratio', columns='variant', values=m, aggfunc='first').reindex(columns=order).round(3).to_string())
