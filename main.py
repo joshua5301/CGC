@@ -103,8 +103,15 @@ else:
             # same per-node temperature as the label teacher, otherwise a strongly regularised probe
             # (flat posteriors) silently switches the KL refinement off
             P0 = F.softmax(pf0.double() @ W0c, dim=1)
+        if args.teacher_only and prop_fn is None:
+            yd = data.y.to(P0.device); pr = P0.argmax(1)
+            acc = lambda m: (100 * (pr[m.to(P0.device)] == yd[m.to(P0.device)]).double().mean()).item()
+            print(f'teacher_prop[refine]: no propagation  val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P0):.3f}  (P0 = {args.refine_teacher} teacher)')
         if prop_fn is not None:
             _prop_report(P0, 'before'); P0 = prop_fn(P0); _prop_report(P0, 'refine')
+        if args.teacher_only:
+            print('teacher_only: stopping after the teacher (no condensation, no student)')
+            raise SystemExit(0)
         if args.teacher_ent > 0:
             P0 = match_entropy(P0, args.teacher_ent)[0]
         elif args.teacher_temp != 1.0:

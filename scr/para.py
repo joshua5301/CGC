@@ -151,6 +151,7 @@ def para():
     parser.add_argument('--tcs_iters', type=int, default=50)
     parser.add_argument('--tcs_scale', type=str, default='auto', help='auto (autoscale) or a number')
     parser.add_argument('--tcs_alpha2', type=float, default=0.8)
+    parser.add_argument('--teacher_only', type=int, default=0, help='1: fit the (refinement) teacher, print its val/test accuracy and exit')
     parser.add_argument('--sinkhorn', type=float, default=0.0,
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')
     parser.add_argument('--sk_iters', type=int, default=10, help='Lloyd rounds of --sinkhorn')
