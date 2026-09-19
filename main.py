@@ -419,6 +419,29 @@ else:
             ent1 = -(Y.clamp_min(1e-12) * Y.clamp_min(1e-12).log()).sum(1).mean().item()
             print(f'label sharpen: ' + ('argmax' if args.label_hard else f'T={args.label_temp:g}') +
                   f'  mean entropy {ent0:.3f} -> {ent1:.3f}  maxp {Y.max(1)[0].mean():.3f}')
+        if args.dir_alpha > 0 and assign is not None:
+            # Dirichlet-multinomial cell labels: Y_t | t in C_j ~ Cat(theta_j), theta_j ~ Dir(alpha r); with the k_j training-label
+            # counts of the cell the posterior predictive is q_j = (k_j + alpha r) / (n_j^L + alpha). r = global training class
+            # frequencies ('global') or the teacher's cell mean ('teacher', i.e. the teacher is the prior and the in-cell labels
+            # correct it). Also reports the leave-one-out predictive CE / accuracy of the training labels under the model.
+            a_dir = assign.to(Y.device); C_ = Y.shape[1]
+            trm = tr_pool.to(Y.device); ytr = y_pool.to(Y.device)[trm]
+            k_dir = torch.zeros(len(Y), C_, dtype=torch.float64, device=Y.device).index_put_((a_dir[trm], ytr), torch.ones(int(trm.sum()), dtype=torch.float64, device=Y.device), accumulate=True)
+            nL = k_dir.sum(1, keepdim=True)
+            r_dir = F.one_hot(ytr, C_).double().mean(0).expand(len(Y), C_) if args.dir_prior == 'global' else Y.double()
+            Y_dir = (k_dir + args.dir_alpha * r_dir) / (nL + args.dir_alpha)
+            # leave-one-out predictive of every training label
+            q_loo = (k_dir[a_dir[trm]].gather(1, ytr.unsqueeze(1)).squeeze(1) - 1 + args.dir_alpha * r_dir[a_dir[trm]].gather(1, ytr.unsqueeze(1)).squeeze(1)) / (nL[a_dir[trm]].squeeze(1) - 1 + args.dir_alpha)
+            q_full = (k_dir[a_dir[trm]] - F.one_hot(ytr, C_).double() + args.dir_alpha * r_dir[a_dir[trm]]) / (nL[a_dir[trm]] - 1 + args.dir_alpha)
+            loo_ce = -q_loo.clamp_min(1e-12).log().mean().item(); loo_acc = (q_full.argmax(1) == ytr).double().mean().item()
+            t_ce = -Y[a_dir[trm]].gather(1, ytr.unsqueeze(1)).clamp_min(1e-12).log().mean().item(); t_acc = (Y[a_dir[trm]].argmax(1) == ytr).double().mean().item()
+            hist = torch.bincount(nL.squeeze(1).long(), minlength=3)
+            cnt_dir = torch.bincount(a_dir, minlength=len(Y)).double()
+            print(f'dirichlet labels: alpha {args.dir_alpha:g} prior {args.dir_prior}  cells with 0/1/2+ training labels {int(hist[0])}/{int(hist[1])}/{int(hist[2:].sum())} '
+                  f'(pool share of unlabelled cells {100 * cnt_dir[nL.squeeze(1) == 0].sum() / cnt_dir.sum():.1f}%)  '
+                  f'LOO train-label CE {loo_ce:.3f} acc {100 * loo_acc:.1f}%  | teacher cell labels on the same: CE {t_ce:.3f} acc {100 * t_acc:.1f}%  '
+                  f'| label argmax changed {100 * (Y_dir.argmax(1) != Y.argmax(1)).double().mean():.1f}%  H {mean_entropy(Y):.3f} -> {mean_entropy(Y_dir):.3f}')
+            Y = Y_dir.to(Y.dtype)
         if pf is not None and assign is not None:
             # group diag: how well the condensed labels q_j estimate the TRUE class composition of their cells
             # (uses every pool label -> diagnostic only; --label_oracle 1 substitutes them = label-estimation ceiling)

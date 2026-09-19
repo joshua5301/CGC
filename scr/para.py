@@ -191,6 +191,9 @@ def para():
     parser.add_argument('--pw_tau', type=float, default=0.0,
                         help='>0: node-weighted l1 partition, w_t = exp(-(d_t - d_min) / (tau * median d)), d_t = distance to the nearest training node (k-means init + weighted medians)')
     parser.add_argument('--pw_min', type=float, default=0.0, help='floor of the partition weight')
+    parser.add_argument('--dir_alpha', type=float, default=0.0,
+                        help='>0: condensed labels := Dirichlet-multinomial posterior predictive from the in-cell TRAINING labels, (k_j + alpha r) / (n_j^L + alpha)')
+    parser.add_argument('--dir_prior', type=str, default='global', choices=['global', 'teacher'], help='r: global training class frequencies, or the teacher cell mean')
     parser.add_argument('--label_oracle', type=int, default=0,
                         help='DIAGNOSTIC: 1 = condensed labels := true class composition of each cell (uses all pool labels)')
     parser.add_argument('--cluster_obj', type=str, default='l2', choices=['l2', 'l1'],
