@@ -213,6 +213,17 @@ else:
                       f'({keep / max(len(hl), 1):.0f} per landmark)')
                 if keep == 0:
                     raise SystemExit('avg_pool unlabeled: no unlabeled node in the pool')
+            if args.prox_tau > 0:
+                # proximity-to-supervision weights in the cell mean: w_t = exp(-(d_t - d_min) / (tau * median d)), d_t = distance
+                # in H to the nearest TRAINING node (the teacher's error grows with d_t: cora Q1->Q4 88->76, citeseer 81->61, arxiv 79->62)
+                d_prox = torch.cdist(pf.float(), H_L.to(pf.device).float()).min(1)[0]
+                w_prox = torch.exp(-(d_prox - d_prox.min()) / (args.prox_tau * d_prox.median().clamp_min(1e-12))).clamp_min(args.prox_min)
+                if sel is not None:
+                    w_prox = w_prox * sel.to(w_prox.dtype)
+                sel = w_prox
+                print(f'prox weights: tau {args.prox_tau:g} x median d ({d_prox.median():.3f})  w mean {w_prox.mean():.3f}  '
+                      f'quartiles {[round(v, 3) for v in torch.quantile(w_prox, torch.tensor([0.25, 0.5, 0.75], device=w_prox.device)).tolist()]}  '
+                      f'effective sample {100 * w_prox.sum() ** 2 / (len(w_prox) * (w_prox ** 2).sum()):.1f}%')
         if args.label_mode == 'mlp_mean':
             if assign is None:
                 raise SystemExit('mlp_mean needs a cluster assignment')
