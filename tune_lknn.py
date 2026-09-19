@@ -1,4 +1,5 @@
-# ============ Cell 1: common (single session) =============
+# ============ Cell 1: common (SESSION = 'A' cora 5.2% | 'B' citeseer 3.6% gamma 3 | 'C' citeseer 3.6% gamma 30) =============
+SESSION = 'A'
 # Label variance reduction for small cells (--label_knn m): the condensed label of cell j = size-weighted mean of the
 # cell-mean posteriors of its m nearest cells (centre distance), features unchanged. Motivation: the oracle-label gain on
 # cora grows with density (+0.6 / +1.5 / +2.5 at 1.3 / 2.6 / 5.2%) while cell agreement drops (96.7 -> 90.8%), i.e. cells of
@@ -10,7 +11,7 @@ from google.colab import drive
 drive.mount('/content/drive')
 LOGDIR = '/content/drive/MyDrive/cgc_tune'; os.makedirs(LOGDIR, exist_ok=True)
 TAG = 'lknn1'
-LOG = f'{LOGDIR}/{TAG}.jsonl'
+LOG = f'{LOGDIR}/{TAG}_{SESSION}.jsonl'
 pd.set_option('display.width', 250)
 subprocess.run('git -C /content/CGC pull', shell=True)
 assert subprocess.run('grep -c label_knn_w /content/CGC/scr/para.py', shell=True,
@@ -21,9 +22,9 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
         "--label_mode kernel_mean --kernel_prior rkhs --cluster_obj l1 --cluster_feat last --expert_basis 3000 "
         "--conv_depth 2 --no_hyperpara 1 --lr 0.01 --epoch 1000 --eval_every 10 --dropout 0.5 --weight_decay 5e-4")
 #         ds         ratio  kernel   gamma fn  mu    temps              (protocol-A val-best condensation; citeseer also gamma 30 = its oracle region)
-CELLS = [('cora',     0.052, 'relu1', 0.01, 0, 2.0, [1.0, 0.5]),
-         ('citeseer', 0.036, 'erf',   3.0,  1, 0.2, [1.0, 0.5, 0.25]),
-         ('citeseer', 0.036, 'erf',   30.0, 1, 2.0, [1.0, 0.5, 0.25])]
+CELLS = {'A': [('cora',     0.052, 'relu1', 0.01, 0, 2.0, [1.0, 0.5])],
+         'B': [('citeseer', 0.036, 'erf',   3.0,  1, 0.2, [1.0, 0.5, 0.25])],
+         'C': [('citeseer', 0.036, 'erf',   30.0, 1, 2.0, [1.0, 0.5, 0.25])]}[SESSION]
 MS = [1, 2, 4, 8]
 DOWN = '0,0.1,0.3,0.5,0.7,0.9;5e-4,5e-3'
 REPEAT = 5
@@ -32,7 +33,9 @@ PAT_G = re.compile(r'group diag: KL\(true\|\|q\) ([\d.]+) .*argmax agree ([\d.]+
 PAT_K = re.compile(r'label_knn: m=(\d+) .*argmax changed ([\d.]+)% of cells  H ([\d.]+) -> ([\d.]+)')
 
 def load():
-    return pd.DataFrame([json.loads(l) for l in open(LOG)]) if os.path.exists(LOG) else pd.DataFrame()
+    import glob
+    recs = [json.loads(l) for f in glob.glob(f'{LOGDIR}/{TAG}_*.jsonl') for l in open(f)]
+    return pd.DataFrame(recs)
 
 def done(**key):
     df = load()
@@ -62,7 +65,7 @@ def run(ds, r, kernel, gamma, fn, mu, temp, m, oracle=0, w='size'):
     print(f"{ds:8s} {r:<6g} g={gamma:<4g} T={temp:<4g} m={m} {w:7s}{' ORACLE' if oracle else ''}  agree {g[2]}%  KL {g[1]}  H(q) {g[4]}"
           + (f"  flipped {kk[2]}%" if kk else '') + f"  val {best[5]} (do={best[0]} wd={best[1]}) test {best[3]}±{best[4]}  ({round(time.time() - t)}s)")
 
-print('lknn1: label kNN smoothing at cora 5.2% and citeseer 3.6%')
+print(f'lknn1 {SESSION}: label kNN smoothing  {CELLS}')
 
 # ============ Cell 2: run =============
 for ds, r, kernel, gamma, fn, mu, temps in CELLS:
@@ -75,7 +78,8 @@ for ds, r, kernel, gamma, fn, mu, temps in CELLS:
         if not done(ds=ds, ratio=r, gamma=gamma, temp=temp, m=1, oracle=1):
             run(ds, r, kernel, gamma, fn, mu, temp, 1, 1)
 
-# ============ Cell 3: tables =============
+# ============ Cell 3: tables (run where all lknn1_*.jsonl are present) =============
+import glob
 df = load()
 b = df.sort_values('val', ascending=False).groupby(['ds', 'ratio', 'gamma', 'temp', 'm', 'w', 'oracle']).head(1)
 b = b.assign(var=b.apply(lambda x: 'ORACLE' if x.oracle else f"m{int(x.m)}" + ('' if x.w == 'size' else ' unif'), axis=1),
