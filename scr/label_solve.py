@@ -924,8 +924,21 @@ def knn_cells(centres, H_pool, K, chunk=64):
     return torch.cat(idx)
 
 
-def knn_means(X, idx):
-    return X[idx.to(X.device)].mean(1)
+def knn_means(X, idx, mask=None):
+    """mean of X over the rows idx (n x Kmax); mask (n x Kmax, bool) restricts each row to its own window"""
+    Xi = X[idx.to(X.device)]
+    if mask is None:
+        return Xi.mean(1)
+    w = mask.to(X.device, X.dtype).unsqueeze(2)
+    return (Xi * w).sum(1) / w.sum(1).clamp_min(1)
+
+
+def knn_cells_var(centres, H_pool, Ks, chunk=64):
+    """per-centre window sizes Ks (LongTensor): returns idx (n x Kmax) of the nearest pool nodes and the mask of the first K_j"""
+    Kmax = int(min(int(Ks.max()), len(H_pool)))
+    idx = knn_cells(centres, H_pool, Kmax, chunk)
+    mask = torch.arange(Kmax, device=idx.device).unsqueeze(0) < Ks.to(idx.device).clamp(1, Kmax).unsqueeze(1)
+    return idx, mask
 
 
 def cell_std(H_pool, assign, n_p):

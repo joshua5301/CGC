@@ -423,19 +423,27 @@ else:
             h = h @ Bq @ Bq.T
             print(f'feat_sub: rank {Bq.shape[1]}  dropped energy {res ** 2:.3f}  '
                   f'bytes/node {h.shape[1] + Y.shape[1]} -> {2 * Bq.shape[1]} (+{Bq.numel()} shared)')
-        if args.cell_k > 0 and pf is not None:
+        if (args.cell_k > 0 or args.cell_k_mult > 0) and pf is not None:
             Pk = (ctx['P'] if 'P' in ctx else
                   F.softmax((pf.double() @ ctx['W']) if 'W' in ctx
                             else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1))
-            knn = knn_cells(h, H_pool, min(args.cell_k, len(H_pool)))
-            cover = torch.unique(knn).numel()
+            if args.cell_k_mult > 0:
+                # window of cell j = cell_k_mult x its own Voronoi size (adapts to the local density)
+                Ks = (torch.bincount(assign.to(h.device), minlength=len(h)).double() * args.cell_k_mult).ceil().long()
+                knn, kmask = knn_cells_var(h, H_pool, Ks)
+                kdesc = f'K = {args.cell_k_mult:g} x cell size (median {int(Ks.median())}, max {int(Ks.max())})'
+            else:
+                knn, kmask = knn_cells(h, H_pool, min(args.cell_k, len(H_pool))), None
+                kdesc = f'K={knn.shape[1]}'
+            cover = torch.unique(knn if kmask is None else knn[kmask]).numel()
+            nsel = knn.numel() if kmask is None else int(kmask.sum())
             if not args.cell_k_labels_only:
-                h = knn_means(H_pool, knn)
-                h_d = [knn_means(E, knn) for E in pool_d]
+                h = knn_means(H_pool, knn, kmask)
+                h_d = [knn_means(E, knn, kmask) for E in pool_d]
                 hl = label_feats(args.label_feat, h_d)
-            Y0k = Y; Y = knn_means(Pk, knn)
-            print(f'cell_k: K={knn.shape[1]}' + (' (labels only, features stay the medians)' if args.cell_k_labels_only else '') +
-                  f'  voronoi mean {len(H_pool) / len(h):.0f}  pool covered {cover / len(H_pool):.2%}  multiplicity {knn.numel() / cover:.2f}  '
+            Y0k = Y; Y = knn_means(Pk, knn, kmask)
+            print(f'cell_k: {kdesc}' + (' (labels only, features stay the medians)' if args.cell_k_labels_only else '') +
+                  f'  voronoi mean {len(H_pool) / len(h):.0f}  pool covered {cover / len(H_pool):.2%}  multiplicity {nsel / cover:.2f}  '
                   f'label argmax changed {100 * (Y.argmax(1) != Y0k.argmax(1)).double().mean():.1f}%  H {mean_entropy(Y0k):.3f} -> {mean_entropy(Y):.3f}')
         tan = None
         if ((args.tangent > 0 or args.adj_mode == 'tangent' or args.tan_static)
