@@ -64,6 +64,8 @@ def para():
                         help='overlapping cells: average features/labels over the K nearest pool '
                              'nodes of each centre instead of the Voronoi cell (0 = off)')
     parser.add_argument('--cell_k_mult', type=float, default=0.0, help='>0: overlapping window of cell j = this multiple of its own Voronoi size (instead of a fixed --cell_k)')
+    parser.add_argument('--cell_k_far', type=float, default=0.0,
+                        help='>0: with --cell_k_mult, widen only this top fraction of cells by mean label distance of their members (near cells unchanged)')
     parser.add_argument('--cell_k_labels_only', type=int, default=0, help='1: --cell_k widens only the label averaging window; features keep the cell medians')
     parser.add_argument('--feat_sub', type=int, default=0,
                         help='1 = project condensed features onto the linear teacher subspace '

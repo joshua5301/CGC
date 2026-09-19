@@ -488,19 +488,40 @@ else:
                             else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1))
             if args.cell_k_mult > 0:
                 # window of cell j = cell_k_mult x its own Voronoi size (adapts to the local density)
-                Ks = (torch.bincount(assign.to(h.device), minlength=len(h)).double() * args.cell_k_mult).ceil().long()
+                sz_k = torch.bincount(assign.to(h.device), minlength=len(h)).double()
+                Ks = (sz_k * args.cell_k_mult).ceil().long()
+                far_k = None
+                if args.cell_k_far > 0:
+                    # widen only the far cells (top cell_k_far fraction by the mean distance of their members to the nearest
+                    # training node): the oracle localisation puts the reducible label error there; near cells stay untouched
+                    d_k = label_distance(H_pool, tr_pool, None, 'feat').double().to(h.device)
+                    md_k = torch.zeros(len(h), dtype=torch.float64, device=h.device).index_add_(0, assign.to(h.device), d_k) / sz_k.clamp_min(1)
+                    far_k = torch.zeros(len(h), dtype=torch.bool, device=h.device)
+                    far_k[md_k.argsort(descending=True)[:max(int(round(args.cell_k_far * len(h))), 1)]] = True
+                    Ks = torch.where(far_k, Ks, sz_k.long())
                 knn, kmask = knn_cells_var(h, H_pool, Ks)
                 kdesc = f'K = {args.cell_k_mult:g} x cell size (median {int(Ks.median())}, max {int(Ks.max())})'
+                if far_k is not None:
+                    kdesc += (f' on the far {args.cell_k_far:.0%} of cells only ({int(far_k.sum())} cells, {100 * sz_k[far_k].sum() / sz_k.sum():.1f}% of the pool, '
+                              f'mean size {sz_k[far_k].mean():.1f} -> window {Ks[far_k].double().mean():.1f})')
             else:
                 knn, kmask = knn_cells(h, H_pool, min(args.cell_k, len(H_pool))), None
                 kdesc = f'K={knn.shape[1]}'
+                far_k = None
             cover = torch.unique(knn if kmask is None else knn[kmask]).numel()
             nsel = knn.numel() if kmask is None else int(kmask.sum())
+            keep_k = None if far_k is None else ~far_k          # rows of the near cells are restored exactly
             if not args.cell_k_labels_only:
-                h = knn_means(H_pool, knn, kmask)
-                h_d = [knn_means(E, knn, kmask) for E in pool_d]
+                h_new = knn_means(H_pool, knn, kmask); h_d_new = [knn_means(E, knn, kmask) for E in pool_d]
+                if keep_k is not None:
+                    h_new[keep_k] = h[keep_k]
+                    for E_new, E_old in zip(h_d_new, h_d):
+                        E_new[keep_k.to(E_new.device)] = E_old[keep_k.to(E_old.device)]
+                h, h_d = h_new, h_d_new
                 hl = label_feats(args.label_feat, h_d)
             Y0k = Y; Y = knn_means(Pk, knn, kmask)
+            if keep_k is not None:
+                Y[keep_k.to(Y.device)] = Y0k[keep_k.to(Y.device)]
             print(f'cell_k: {kdesc}' + (' (labels only, features stay the medians)' if args.cell_k_labels_only else '') +
                   f'  voronoi mean {len(H_pool) / len(h):.0f}  pool covered {cover / len(H_pool):.2%}  multiplicity {nsel / cover:.2f}  '
                   f'label argmax changed {100 * (Y.argmax(1) != Y0k.argmax(1)).double().mean():.1f}%  H {mean_entropy(Y0k):.3f} -> {mean_entropy(Y):.3f}')
