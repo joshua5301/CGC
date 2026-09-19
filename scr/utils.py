@@ -275,7 +275,7 @@ def square_feat_map(z, c=2**-.5):
   return x * coefs
 
 
-def clustering_fast(H, num_center, method):
+def clustering_fast(H, num_center, method, weights=None):
 
     if num_center == len(H):
         return np.arange(num_center)
@@ -283,7 +283,15 @@ def clustering_fast(H, num_center, method):
     if method == 'kmeans':
         kmeans = faiss.Kmeans(int(H.shape[1]), int(num_center), gpu=False)
         kmeans.cp.min_points_per_centroid = 1
-        kmeans.train(H.astype('float32'))
+        if weights is None:
+            kmeans.train(H.astype('float32'))
+        else:
+            try:
+                kmeans.train(H.astype('float32'), weights=np.asarray(weights, dtype='float32'))
+            except TypeError:                       # old faiss without sample weights: weighted resampling
+                w = np.asarray(weights, dtype='float64'); w = w / w.sum()
+                idx = np.random.RandomState(0).choice(len(H), size=len(H), replace=True, p=w)
+                kmeans.train(H[idx].astype('float32'))
         _, I = kmeans.index.search(H.astype('float32'), 1)
         cluster_labels = I.flatten()
     elif method == 'spectral':

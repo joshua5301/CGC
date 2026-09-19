@@ -389,23 +389,24 @@ def bregman_assign(H, P, assign, k, mu, iters=20, chunk=8192):
     return assign, moved
 
 
-def _weiszfeld(H, assign, k, iters=30, eps=1e-9):
+def _weiszfeld(H, assign, k, iters=30, eps=1e-9, wn=None):
     """Geometric median of every cell (argmin_c sum_t ||h_t - c||), Weiszfeld iterations from the mean.
     Returns the medians and the final per-node weights 1/||h_t - c_j|| (normalised within the cell)."""
     dt, dev = H.dtype, H.device
     cnt = torch.bincount(assign, minlength=k).clamp_min(1).to(dt)
     c = torch.zeros(k, H.shape[1], dtype=dt, device=dev).index_add_(0, assign, H) / cnt.unsqueeze(1)
+    wn = torch.ones(len(H), dtype=dt, device=dev) if wn is None else wn.to(device=dev, dtype=dt)   # node weights (weighted median)
     for _ in range(iters):
-        w = 1.0 / (H - c[assign]).norm(dim=1).clamp_min(eps)
+        w = wn / (H - c[assign]).norm(dim=1).clamp_min(eps)
         num = torch.zeros(k, H.shape[1], dtype=dt, device=dev).index_add_(0, assign, w.unsqueeze(1) * H)
         den = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, w).clamp_min(eps)
         c = num / den.unsqueeze(1)
-    w = 1.0 / (H - c[assign]).norm(dim=1).clamp_min(eps)
+    w = wn / (H - c[assign]).norm(dim=1).clamp_min(eps)
     den = torch.zeros(k, dtype=dt, device=dev).index_add_(0, assign, w).clamp_min(eps)
     return c, w / den[assign]
 
 
-def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30, uvar=None, lam=0.0):
+def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30, uvar=None, lam=0.0, wn=None):
     """Lloyd iterations for the Lipschitz objective  sum_j sum_{t in C_j} ||h_t - c_j|| / s  +  mu * KL(p_t || ybar_j):
     the unsquared feature distance is what the global-Lipschitz bound produces, so its optimal centre is the
     geometric median (Weiszfeld) instead of the mean; the label term is unchanged (mean posterior).
@@ -418,7 +419,7 @@ def l1_assign(H, P, assign, k, mu, iters=20, chunk=8192, w_iters=30, uvar=None, 
         P = P.double().clamp_min(1e-12)
         ent = (P * P.log()).sum(1)
     def centres(a):
-        c, w = _weiszfeld(H, a, k, w_iters)
+        c, w = _weiszfeld(H, a, k, w_iters, wn=wn)      # node-weighted objective sum_t w_t ||h_t - c_j||: weighted median
         if not use_lab:
             return c, None, w
         cnt = torch.bincount(a, minlength=k).clamp_min(1).to(H.dtype).unsqueeze(1)
@@ -524,9 +525,10 @@ def balance_assign(H, assign, k, slack=1.0, iters=20):
     return assign, int(cnt.min()), int(cnt.max()), cap
 
 
-def _assign(H, k, method):
+def _assign(H, k, method, w=None):
     from scr.utils import clustering_fast
-    labels = clustering_fast(H.cpu().numpy().astype('float32'), int(k), method)
+    labels = clustering_fast(H.cpu().numpy().astype('float32'), int(k), method,
+                             None if w is None else w.detach().cpu().numpy())
     return torch.from_numpy(np.ascontiguousarray(labels)).long()
 
 
@@ -694,15 +696,16 @@ def generate_landmarks(args, H_pool, y_pool, extra=(), Hc=None, graph=None, P=No
             k = n_p
             print(f'trim: {n_out} outliers ({args.trim:.1%}) attached after clustering')
         else:
-            assign, k = _assign(Hw, n_p, method), n_p
+            assign, k = _assign(Hw, n_p, method, w=getattr(args, '_pw', None)), n_p
         if getattr(args, 'balanced', 0.0) > 0:
             assign, lo, hi, cap = balance_assign(Hw, assign, k, args.balanced)
             print(f'balanced: cap {cap} (slack {args.balanced:g})  cell size min/max {lo}/{hi}')
     if getattr(args, 'cluster_obj', 'l2') == 'l1':
         Pd = None if P is None else P.to(Hw.device)
         uv = getattr(args, '_uvar', None)
+        pw = getattr(args, '_pw', None)
         assign, moved, _, w = l1_assign(Hw, Pd, assign.to(Hw.device), k, getattr(args, 'bregman', 0.0),
-                                        uvar=uv, lam=getattr(args, 'uvar_lambda', 0.0))
+                                        uvar=uv, lam=getattr(args, 'uvar_lambda', 0.0), wn=pw)
         if uv is not None and getattr(args, 'uvar_lambda', 0.0) > 0:
             cnt_u = torch.bincount(assign.to(Hw.device), minlength=k).double()
             S_u = torch.zeros(k, dtype=torch.float64, device=Hw.device).index_add_(0, assign.to(Hw.device), uv.to(Hw.device).double())
@@ -1321,6 +1324,21 @@ def merge_cells(H, P, assign, k, mu, u, lam, knn=5, w_iters=30, eps=1e-9):
             cand[key2] = delta(*key2)
     w = _weiszfeld(H, assign, k, w_iters)[1]
     return assign, w, int(alive.sum()), merges, (j0_before, u_before), (J0(), U())
+
+
+def cell_allocation_diag(d, assign, k):
+    """How the cells are allocated over the label-distance quartiles of the pool: every cell is binned by the mean distance
+    of its members to the nearest training node; prints the number of cells, their mean size and the pool share per bin."""
+    dev = assign.device; d = d.to(dev).double()
+    cnt = torch.bincount(assign, minlength=k).double(); keep = cnt > 0
+    md = torch.zeros(k, dtype=torch.float64, device=dev).index_add_(0, assign, d) / cnt.clamp_min(1)
+    edges = torch.quantile(d, torch.tensor([0.25, 0.5, 0.75], dtype=torch.float64, device=dev))
+    b = torch.bucketize(md, edges)
+    parts = []
+    for q in range(4):
+        m = keep & (b == q)
+        parts.append(f'Q{q + 1}: {int(m.sum()):4d} cells, mean size {cnt[m].mean().item() if m.any() else 0:5.1f}, pool {100 * cnt[m].sum().item() / cnt.sum().item():4.1f}%')
+    print('cell allocation by label distance (cell mean d vs node quartiles):  ' + ' | '.join(parts))
 
 
 def match_entropy(P, target, iters=40):

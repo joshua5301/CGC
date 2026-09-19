@@ -149,9 +149,25 @@ else:
         if P0 is None or args.cluster_obj != 'l1':
             raise SystemExit('--merge_lambda needs --bregman > 0 (teacher posteriors) and --cluster_obj l1')
         args._merge_u = merge_uncertainty(args.merge_u, pf0, data.train_mask, pool_mask(args, data, len(data.y), pf0.device))
+    d_lab = None
+    if args.pw_tau > 0:
+        # node-weighted partition: w_t = exp(-(d_t - d_min) / (tau * median d)) (floor pw_min, mean 1), d_t = distance in the pool
+        # features to the nearest training node. Weights enter the k-means init and the Weiszfeld medians only (the per-node
+        # argmin is unchanged), so centres move towards well-labelled regions and the far region gets fewer, larger cells.
+        d_lab = label_distance(H_pool, tr_pool, None, 'feat')
+        w_pw = torch.exp(-(d_lab - d_lab.min()) / (args.pw_tau * d_lab.median().clamp_min(1e-12))).clamp_min(args.pw_min)
+        w_pw = w_pw / w_pw.mean()
+        args._pw = w_pw
+        print(f'partition weights: tau {args.pw_tau:g} x median d ({d_lab.median():.3f})  floor {args.pw_min:g}  '
+              f'quartiles {[round(v, 3) for v in torch.quantile(w_pw, torch.tensor([0.25, 0.5, 0.75], device=w_pw.device)).tolist()]}  '
+              f'effective sample {100 * w_pw.sum() ** 2 / (len(w_pw) * (w_pw ** 2).sum()):.1f}%')
     pg = (data.edge_index, pool_mask(args, data, len(data.y), H_pool.device))
     h, assign, h_d = generate_landmarks(args, H_pool, y_pool, pool_d, Hc, graph=pg, P=P0)
     n_cand, args.budget = len(h), n_keep
+    if assign is not None and args.cluster_obj == 'l1':
+        if d_lab is None:
+            d_lab = label_distance(H_pool, tr_pool, None, 'feat')
+        cell_allocation_diag(d_lab, assign.to(d_lab.device), len(h))
 
     y_L = data.y[data.train_mask]
     H_all = label_feats(args.label_feat, depths)
