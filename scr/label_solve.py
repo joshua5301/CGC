@@ -959,7 +959,7 @@ def propagate_posterior(P, adj_norm, k, alpha, seeds=None, seed_mask=None):
     return Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
 
 
-def correct_and_smooth(P, adj_norm, train_mask, Y_train, resid_train=None, correct=True, alpha1=0.8, iters1=50,
+def teacher_cs(P, adj_norm, train_mask, Y_train, resid_train=None, correct=True, alpha1=0.8, iters1=50,
                        scale='auto', alpha2=0.8, iters2=50):
     """Correct & Smooth (Huang et al. 2021) on teacher posteriors P (N x C) over the ORIGINAL graph.
     Correct: E = 0 except E[train] = residual (Y - P_oof or Y - P); E <- (1-a1) E0 + a1 A E, iters1 times;

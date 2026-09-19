@@ -79,7 +79,7 @@ else:
                                               args.kernel_bw, args.teacher_loss, args.probe_tol, 1.0, args.tcs_folds, args.seed)
                 print(f'C&S: {args.tcs_folds}-fold OOF teacher acc on train {100 * acc_oof:.2f}%  mean |resid|_1 {R_cs.abs().sum(1).mean():.3f}')
             def prop_fn(P, _R=R_cs):
-                G, st_ = correct_and_smooth(P, adj_prop, data.train_mask, YL0.double(), _R, bool(args.tcs_correct), args.tcs_alpha1, args.tcs_iters,
+                G, st_ = teacher_cs(P, adj_prop, data.train_mask, YL0.double(), _R, bool(args.tcs_correct), args.tcs_alpha1, args.tcs_iters,
                                             args.tcs_scale, args.tcs_alpha2, args.tcs_smooth_iters)
                 if st_:
                     print(f"C&S correct: argmax changed on {100 * st_['moved']:.1f}% of nodes")
