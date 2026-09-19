@@ -321,6 +321,14 @@ else:
                       + f'  -> re-clustered in its {Z.shape[1]}d logit space  label change {(Yn - Yc).abs().sum(1).mean():.4f}')
                 Yc = Yn
             Y = Yc
+        if args.label_knn > 1 and assign is not None:
+            # small cells do not average the teacher's errors away (oracle gain grows with density): widen the label
+            # averaging radius to the m nearest cells (size-weighted), keeping the medians as features
+            cnt_k = torch.bincount(assign.to(Y.device), minlength=len(Y)).double()
+            Yk = label_knn_smooth(Y, h, cnt_k, args.label_knn, args.label_knn_w)
+            print(f'label_knn: m={args.label_knn} ({args.label_knn_w}-weighted)  mean L1 move {(Yk - Y).abs().sum(1).mean():.4f}  '
+                  f'argmax changed {100 * (Yk.argmax(1) != Y.argmax(1)).double().mean():.1f}% of cells  H {mean_entropy(Y):.3f} -> {mean_entropy(Yk):.3f}')
+            Y = Yk
         if args.set_head and pf is not None and assign is not None and ('P' in ctx or 'W' in ctx):
             # group teacher: a Deep-Sets head on the fixed node teacher predicts each cell's class composition;
             # trained on cell-like sets (k-means at several granularities + the actual cells) whose targets are the

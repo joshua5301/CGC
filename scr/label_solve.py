@@ -796,6 +796,21 @@ def _cluster_softmax(u, assign, n_p):
     return e / s[assign].clamp_min(1e-30)
 
 
+def label_knn_smooth(Y, centres, counts, m, weight='size'):
+    """Label variance reduction for small cells: the label of cell j becomes the (size-weighted) mean of the cell-mean
+    posteriors of its m nearest cells (itself included; distance between centres). m = 1 is the plain cell mean.
+    The condensed features stay the medians - only the label averaging radius grows."""
+    if m <= 1 or len(Y) <= 1:
+        return Y
+    m = int(min(m, len(Y)))
+    C = centres.to(Y.device).double()
+    D = torch.cdist(C, C)
+    idx = D.topk(m, dim=1, largest=False)[1]                                   # n x m, column 0 = self
+    w = counts.to(Y.device).double()[idx] if weight == 'size' else torch.ones_like(idx, dtype=Y.dtype)
+    Ys = (Y[idx] * w.unsqueeze(2)).sum(1) / w.sum(1, keepdim=True).clamp_min(1e-12)
+    return Ys
+
+
 def _pool_means(P, assign, n_p, sel=None):
     z = lambda k: torch.zeros(k, dtype=P.dtype, device=P.device)
     one = torch.ones(len(P), dtype=P.dtype, device=P.device)
