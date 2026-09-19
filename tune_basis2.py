@@ -27,6 +27,7 @@ GMULT = [1.0, 10.0]
 REPEAT = 5
 PAT_D = re.compile(r'== down do=([\d.]+) wd=([\d.e-]+)(?: lr=([\d.e-]+))?: ([\d.]+) \+- ([\d.]+)\s+\(val ([\d.]+)\)')
 PAT_T = re.compile(r'teacher_prop\[refine\]: .*?val ([\d.]+)%  test ([\d.]+)%  H ([\d.]+)')
+PAT_TR = re.compile(r'teacher_prop\[refine\]: .*?train ([\d.]+)%  \(inductive')
 PAT_E = re.compile(r'expert: train ([\d.]+)%(?:\s+val ([\d.]+)%)?(?:\s+test ([\d.]+))?')
 PAT_M = re.compile(r'teacher_only: .*?elapsed ([\d.]+) s  peak GPU mem ([\d.]+) GB')
 
@@ -52,7 +53,8 @@ def teacher(basis, gamma):
     if not m:
         print('FAIL teacher', basis, gamma, '\n', out[-1500:]); return
     tv = float(t[1]) if t else (float(e[2]) if e and e[2] else None); tt = float(t[2]) if t else (float(e[3]) if e and e[3] else None)
-    rec = dict(stage='teacher', ds=ds, ratio=r, basis=basis, gamma=gamma, t_val=tv, t_test=tt, t_train=float(e[1]) if e else None,
+    tr_ = PAT_TR.search(out)
+    rec = dict(stage='teacher', ds=ds, ratio=r, basis=basis, gamma=gamma, t_val=tv, t_test=tt, t_train=float(tr_[1]) if tr_ else (float(e[1]) if e else None),
                secs=float(m[1]), mem=float(m[2]))
     with open(LOG, 'a') as f:
         f.write(json.dumps(rec) + '\n')

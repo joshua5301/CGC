@@ -99,8 +99,9 @@ else:
             def _prop_report(P, tag):
                 yd = data.y.to(P.device); pr = P.argmax(1)
                 acc = lambda m: (100 * (pr[m.to(P.device)] == yd[m.to(P.device)]).double().mean()).item()
+                _has = hasattr(data, 'val_mask') and hasattr(data, 'test_mask')
                 print(f'teacher_prop[{tag}]: ' + (f'lp_mix gamma={args.lp_mix:g} {args.lp_mode} alpha={args.lp_alpha:g} ' if args.lp_mix > 0 else f'C&S correct={args.tcs_correct} a1={args.tcs_alpha1:g}x{args.tcs_iters} a2={args.tcs_alpha2:g}x{args.tcs_smooth_iters} ' if args.tcs_smooth_iters > 0 else f'k={args.teacher_prop} alpha={args.prop_alpha:g} seed_train={args.prop_seed} ')
-                      + f' val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P):.3f}  (P0 = {args.refine_teacher} teacher)')
+                      + (f' val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%' if _has else f' train {acc(data.train_mask):.2f}%') + f'  H {mean_entropy(P):.3f}  (P0 = {args.refine_teacher} teacher)')
         early_teacher = None
         if args.refine_teacher == 'kernel' and args.label_mode == 'kernel_mean':
             # same teacher for the KL refinement and the labels: fit the kernel teacher now, reuse it below
@@ -117,7 +118,9 @@ else:
         if args.teacher_only and prop_fn is None:
             yd = data.y.to(P0.device); pr = P0.argmax(1)
             acc = lambda m: (100 * (pr[m.to(P0.device)] == yd[m.to(P0.device)]).double().mean()).item()
-            print(f'teacher_prop[refine]: no propagation  val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P0):.3f}  (P0 = {args.refine_teacher} teacher)')
+            _has = hasattr(data, 'val_mask') and hasattr(data, 'test_mask')
+            print(f'teacher_prop[refine]: no propagation  ' + (f'val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%' if _has else f'train {acc(data.train_mask):.2f}%  (inductive graph: no val/test here)')
+                  + f'  H {mean_entropy(P0):.3f}  (P0 = {args.refine_teacher} teacher)')
         if prop_fn is not None:
             _prop_report(P0, 'before'); P0 = prop_fn(P0); _prop_report(P0, 'refine')
         if args.dist_diag:
