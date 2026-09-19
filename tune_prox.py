@@ -1,5 +1,5 @@
 # ============ Cell 1: common (SESSION = 'A' arxiv 0.25% | 'B' citeseer 3.6% | 'C' cora 5.2%) =============
-# Proximity-to-supervision weights in the cell mean (--prox_tau tau): w_t = exp(-(d_t - d_min) / (tau * median d)), floor 0.1,
+# Proximity-to-supervision weights in the cell mean (--prox_tau tau): w_t = exp(-(d_t - d_min) / (tau * median d)), no floor,
 # d_t = distance in H to the nearest TRAINING node. Basis (dist_diag): the teacher's accuracy falls with d_t on every dataset
 # (feature-distance Q1 -> Q4: cora 88 -> 76, citeseer 81 -> 61, arxiv 79 -> 62). Paired with tau = inf (plain mean) at the
 # protocol-A val-best condensation of the weakest high-density cells; tau x T x dropout/wd on val, repeat 5.
