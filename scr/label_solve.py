@@ -1082,7 +1082,7 @@ def label_distance_diag(P, y, train_mask, eval_mask, H, adj_norm, max_hop=4, tag
         print('   ' + l)
 
 
-def averaging_diag(P, y, train_mask, eval_mask, H, sizes=(5, 10, 20, 40, 80), seed=0):
+def averaging_diag(P, y, train_mask, eval_mask, H, sizes=(5, 10, 20, 40, 80), seed=0, adj_norm=None, max_hop=3):
     """Bias vs variance of the teacher's error as a function of the distance to the nearest LABELLED node.
     Eval nodes (val+test labels, diagnostic only) are split into quartiles of that distance; inside each quartile groups of
     n similar nodes are formed by k-means (n = sizes) and the error of the group-mean posterior against the group's true label
@@ -1093,14 +1093,23 @@ def averaging_diag(P, y, train_mask, eval_mask, H, sizes=(5, 10, 20, 40, 80), se
     Ht = H.to(dev).float(); d = torch.cdist(Ht, Ht[train_mask.to(dev)]).min(1)[0]
     C = P.shape[1]; Y1 = F.one_hot(y, C).double()
     qs = torch.quantile(d[ev], torch.tensor([0.25, 0.5, 0.75], device=dev))
-    bins = [(d <= qs[0]), (d > qs[0]) & (d <= qs[1]), (d > qs[1]) & (d <= qs[2]), (d > qs[2])]
-    print('averaging diag: error of the group-mean posterior vs the group true-label mean, by distance quartile x group size')
-    print('   ' + 'bin'.ljust(8) + ''.join(f'n={n:<3d} L1 / KL / acc   ' for n in sizes) + '(n=1: node-level L1 / acc)')
-    for bi, b in enumerate(bins):
+    bins = [('Q1', d <= qs[0]), ('Q2', (d > qs[0]) & (d <= qs[1])), ('Q3', (d > qs[1]) & (d <= qs[2])), ('Q4', d > qs[2])]
+    if adj_norm is not None:
+        A = adj_norm.to(dev); reach = train_mask.to(dev).double().unsqueeze(1)
+        hop = torch.full((len(y),), max_hop, dtype=torch.long, device=dev); hop[train_mask.to(dev)] = 0
+        for k in range(1, max_hop):
+            reach = (torch.sparse.mm(A.to(reach.dtype), reach) > 0).double()
+            hop[(reach.squeeze(1) > 0) & (hop == max_hop)] = k
+        bins += [(f'hop{k}' + ('+' if k == max_hop else ''), hop == k) for k in range(1, max_hop + 1)]
+    print('averaging diag: error of the group-mean posterior vs the group true-label mean, by distance bin (feature quartile / hop) x group size')
+    print('   ' + 'bin'.ljust(14) + ''.join(f'n={n:<3d} L1 / KL / acc   ' for n in sizes) + '(n=1: node-level L1 / acc)')
+    for name, b in bins:
         m = ev & b
         idx = m.nonzero().squeeze(1)
         Pb, Yb, Hb = P[idx], Y1[idx], Ht[idx].cpu().numpy()
-        row = f'   Q{bi + 1} n={len(idx):<5d}'
+        if len(idx) < 2 * min(sizes):
+            continue
+        row = f'   {name:5s} n={len(idx):<5d}'
         for n in sizes:
             k = max(int(len(idx) // n), 2)
             torch.manual_seed(seed)
