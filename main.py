@@ -429,12 +429,14 @@ else:
                             else dual_logits(pf, ctx.get('basis', hl), ctx['dual']), dim=1))
             knn = knn_cells(h, H_pool, min(args.cell_k, len(H_pool)))
             cover = torch.unique(knn).numel()
-            h = knn_means(H_pool, knn)
-            h_d = [knn_means(E, knn) for E in pool_d]
-            hl = label_feats(args.label_feat, h_d)
-            Y = knn_means(Pk, knn)
-            print(f'cell_k: K={knn.shape[1]}  voronoi mean {len(H_pool) / len(h):.0f}  '
-                  f'pool covered {cover / len(H_pool):.2%}  multiplicity {knn.numel() / cover:.2f}')
+            if not args.cell_k_labels_only:
+                h = knn_means(H_pool, knn)
+                h_d = [knn_means(E, knn) for E in pool_d]
+                hl = label_feats(args.label_feat, h_d)
+            Y0k = Y; Y = knn_means(Pk, knn)
+            print(f'cell_k: K={knn.shape[1]}' + (' (labels only, features stay the medians)' if args.cell_k_labels_only else '') +
+                  f'  voronoi mean {len(H_pool) / len(h):.0f}  pool covered {cover / len(H_pool):.2%}  multiplicity {knn.numel() / cover:.2f}  '
+                  f'label argmax changed {100 * (Y.argmax(1) != Y0k.argmax(1)).double().mean():.1f}%  H {mean_entropy(Y0k):.3f} -> {mean_entropy(Y):.3f}')
         tan = None
         if ((args.tangent > 0 or args.adj_mode == 'tangent' or args.tan_static)
                 and pf is not None and assign is not None):
