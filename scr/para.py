@@ -161,6 +161,7 @@ def para():
     parser.add_argument('--label_knn', type=int, default=1,
                         help='>1: each condensed label = size-weighted mean of the cell-mean posteriors of its m nearest cells (label variance reduction)')
     parser.add_argument('--label_knn_w', type=str, default='size', choices=['size', 'uniform'])
+    parser.add_argument('--dist_diag', type=int, default=0, help='1: print teacher accuracy on val+test nodes binned by hop / feature distance to the nearest training node')
     parser.add_argument('--teacher_only', type=int, default=0, help='1: fit the (refinement) teacher, print its val/test accuracy and exit')
     parser.add_argument('--sinkhorn', type=float, default=0.0,
                         help='>0: equal-mass assignment by entropic optimal transport on the l1 cost (eps relative to the median cost), hardened by argmax')

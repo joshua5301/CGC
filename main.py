@@ -120,6 +120,9 @@ else:
             print(f'teacher_prop[refine]: no propagation  val {acc(data.val_mask):.2f}%  test {acc(data.test_mask):.2f}%  H {mean_entropy(P0):.3f}  (P0 = {args.refine_teacher} teacher)')
         if prop_fn is not None:
             _prop_report(P0, 'before'); P0 = prop_fn(P0); _prop_report(P0, 'refine')
+        if args.dist_diag:
+            ev_m = (data.val_mask | data.test_mask) if hasattr(data, 'val_mask') else data.test_mask
+            label_distance_diag(P0, data.y, data.train_mask, ev_m, pf0, normalize_adj_sparse(data), tag=f' ({args.refine_teacher} teacher)')
         if args.teacher_only:
             print('teacher_only: stopping after the teacher (no condensation, no student)')
             raise SystemExit(0)

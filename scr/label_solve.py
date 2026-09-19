@@ -1049,6 +1049,39 @@ def mix_with_lp(P, LP, gamma, mode='norm'):
     return Q / Q.sum(1, keepdim=True).clamp_min(1e-12)
 
 
+def label_distance_diag(P, y, train_mask, eval_mask, H, adj_norm, max_hop=4, tag=''):
+    """Does the teacher's error grow with the distance to the nearest LABELLED node? Two distances on the eval nodes:
+    hop distance to the nearest training node (BFS on the graph, capped at max_hop) and feature distance to the nearest
+    training node in H (quartiles). Prints teacher accuracy and mean max-prob per bin."""
+    dev = P.device
+    y = y.to(dev); train_mask = train_mask.to(dev); eval_mask = eval_mask.to(dev)
+    pred = P.argmax(1); correct = (pred == y).double(); conf = P.max(1)[0]
+    # hop distance by sparse BFS
+    A = adj_norm.to(dev)
+    reach = train_mask.double().unsqueeze(1)
+    hop = torch.full((len(y),), max_hop, dtype=torch.long, device=dev); hop[train_mask] = 0
+    for k in range(1, max_hop):
+        reach = (torch.sparse.mm(A.to(reach.dtype), reach) > 0).double()
+        new = (reach.squeeze(1) > 0) & (hop == max_hop)
+        hop[new] = k
+    # feature distance to the nearest training node
+    Ht = H.to(dev).float(); d = torch.cdist(Ht, Ht[train_mask]).min(1)[0]
+    ev = eval_mask & ~train_mask
+    lines = []
+    for k in range(1, max_hop + 1):
+        m = ev & (hop == k)
+        if m.sum() > 0:
+            lines.append(f'hop {k}{"+" if k == max_hop else " "}: n={int(m.sum()):5d}  acc {100 * correct[m].mean():.2f}%  maxp {conf[m].mean():.3f}')
+    qs = torch.quantile(d[ev], torch.tensor([0.25, 0.5, 0.75], device=dev))
+    bins = [(d <= qs[0]), (d > qs[0]) & (d <= qs[1]), (d > qs[1]) & (d <= qs[2]), (d > qs[2])]
+    for i, b in enumerate(bins):
+        m = ev & b
+        lines.append(f'feat-dist Q{i + 1}: n={int(m.sum()):5d}  acc {100 * correct[m].mean():.2f}%  maxp {conf[m].mean():.3f}  (d <= {qs[min(i, 2)]:.3f})')
+    print(f'label-distance diag{tag}: teacher accuracy on {"val+test" if True else ""} nodes by distance to the nearest training node')
+    for l in lines:
+        print('   ' + l)
+
+
 def match_entropy(P, target, iters=40):
     logp = P.clamp_min(1e-12).log()
     lo, hi = 1e-3, 1e3
