@@ -5,7 +5,7 @@
 #   u = const : DeltaU = -1 per merge -> plain J0-greedy agglomeration (control: "fewer cells")
 #   u = dist  : distance to the nearest training node (teacher error grows with it) -> "merge the uncertain cells"
 # Control 2: plain GRIP at ratio r/2 and r/4 with the same settings (the density curve at the same m').
-# lambda {0.3, 1, 3, 10} x u x T; dropout/wd on val; repeat 5.
+# lambda {0.01, 0.03, 0.1, 0.3} x u x T; dropout/wd on val; repeat 5.
 SESSION = 'A'
 import subprocess, re, json, os, time, glob, itertools
 import pandas as pd
@@ -26,7 +26,7 @@ BASE = ("--gpu 0 --generate_adj 0 --raw_data_dir /content/data/ --clustering kme
         "--dropout 0.5 --weight_decay 5e-4")
 CELL = {'A': ('cora',     0.052, 'relu1', 0.01, 0, 2.0, [1.0, 0.5]),
         'B': ('citeseer', 0.036, 'erf',   3.0,  1, 0.2, [0.5, 0.25])}[SESSION]
-LAMS = [0.3, 1.0, 3.0, 10.0]
+LAMS = [0.01, 0.03, 0.1, 0.3]        # const: merge threshold on DeltaJ0 = lambda * nbar (~28 on citeseer, ~19 on cora); a merge costs ~4 on citeseer
 US = ['const', 'dist']
 DOWN = '0,0.1,0.3,0.5,0.7,0.9;5e-4,5e-3'
 REPEAT = 5
@@ -44,7 +44,7 @@ def done(ds, r, u, lam, temp):
 
 def run(ds, r, kernel, gamma, fn, mu, temp, u, lam):
     cmd = (f"python main.py {BASE} --dataset_name {ds} --ratio {r} --label_kernel {kernel} --gamma {gamma} --feat_norm {fn} "
-           f"--bregman {mu} --teacher_temp {temp} --merge_lambda {lam} --merge_u {u} --repeat {REPEAT} --down_grid '{DOWN}'")
+           f"--bregman {mu} --teacher_temp {temp} --merge_lambda {lam} --merge_u {u if u != 'none' else 'const'} --repeat {REPEAT} --down_grid '{DOWN}'")
     t = time.time()
     out = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd='/content/CGC'); out = out.stdout + out.stderr
     rows = PAT_D.findall(out); g = PAT_G.search(out); m = PAT_M.search(out); c = PAT_C.search(out)
