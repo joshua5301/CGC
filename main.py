@@ -124,7 +124,8 @@ else:
             ev_m = (data.val_mask | data.test_mask) if hasattr(data, 'val_mask') else data.test_mask
             label_distance_diag(P0, data.y, data.train_mask, ev_m, pf0, normalize_adj_sparse(data), tag=f' ({args.refine_teacher} teacher)')
         if args.teacher_only:
-            print('teacher_only: stopping after the teacher (no condensation, no student)')
+            _pk = torch.cuda.max_memory_allocated() / 2 ** 30 if torch.cuda.is_available() else 0.0
+            print(f'teacher_only: stopping after the teacher (no condensation, no student)  elapsed {time.time() - begin:.1f} s  peak GPU mem {_pk:.2f} GB  basis {args.expert_basis}')
             raise SystemExit(0)
         if args.teacher_ent > 0:
             P0 = match_entropy(P0, args.teacher_ent)[0]
