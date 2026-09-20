@@ -22,15 +22,16 @@ args, data, data_val, data_test = set_dataset(args, datasets)
 begin = time.time()
 budget_node_num = budget(args)
 H0, H1, H2 = conv_graph_multi(args, data)
+X = H2
 
-P = get_teacher_labels(H2, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
+y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
-    print(f'teacher test acc: {100 * (P.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-x_cond, y_cond = partition(H2, P, budget_node_num, args.kl_weight)
-x_cond, y_cond = x_cond.float(), y_cond.float()
-all_node_num = len(x_cond)
-graph = Data(x=x_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(x_cond.device),
-             edge_attr=torch.ones(all_node_num, device=x_cond.device), train_mask=torch.ones(all_node_num, dtype=torch.bool, device=x_cond.device))
+    print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
+X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
+X_cond, y_cond = X_cond.float(), y_cond.float()
+all_node_num = len(X_cond)
+graph = Data(x=X_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(X_cond.device),
+             edge_attr=torch.ones(all_node_num, device=X_cond.device), train_mask=torch.ones(all_node_num, dtype=torch.bool, device=X_cond.device))
 args.cond_time = time.time() - begin
 print(f'condensed: {all_node_num} nodes (budget {budget_node_num})  time {args.cond_time:.2f} s')
 
