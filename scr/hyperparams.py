@@ -2,8 +2,7 @@ import argparse
 
 def get_hyperparams():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_name', type=str, default="reddit",
-                        help='cora, citeseer, arxiv, flickr, reddit')
+    parser.add_argument('--dataset_name', type=str, default="reddit", help='cora, citeseer, arxiv, flickr, reddit')
     parser.add_argument('--ratio', type=float, default=0.001)
     parser.add_argument('--raw_data_dir', type=str, default="./data/")
     parser.add_argument('--epoch', type=int, default=1000)
@@ -11,7 +10,6 @@ def get_hyperparams():
     parser.add_argument('--gpu', type=int, default=-1)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n_dim', type=int, default=256)
-
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
@@ -19,6 +17,7 @@ def get_hyperparams():
     parser.add_argument('--teacher_kernel', type=str, default=None, help='linear, erf, relu')
     parser.add_argument('--gamma', type=float, default=None, help='teacher regularization coefficient')
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
+    parser.add_argument('--T_part', type=float, default=None, help='EXPERIMENT: temperature used by the KL term of the partition (default: same as T)')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
 

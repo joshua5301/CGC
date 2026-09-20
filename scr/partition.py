@@ -25,8 +25,9 @@ def cell_means(y_pred: torch.Tensor, assign: torch.Tensor, cluster_num: int):
     counts = torch.bincount(assign, minlength=cluster_num).clamp(min=1).to(y_pred.dtype)
     return torch.zeros(cluster_num, y_pred.shape[1], dtype=y_pred.dtype, device=y_pred.device).index_add_(0, assign, y_pred) / counts.unsqueeze(1)
 
-def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100):
+def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, y_part=None):
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
+    y_label, y_pred = y_pred, (y_pred if y_part is None else y_part.double().clamp(min=EPS))   # EXPERIMENT: KL term on y_part, labels on y_label
     assign = kmeans_init(X, cluster_num)
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
 
@@ -50,5 +51,5 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     remap = torch.cumsum(keep, 0) - 1
     assign = remap[assign]
     X_cond = centers[keep]
-    y_cond = cell_means(y_pred, assign, int(keep.sum()))
+    y_cond = cell_means(y_label, assign, int(keep.sum()))
     return X_cond, y_cond

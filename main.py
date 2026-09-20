@@ -27,7 +27,8 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
+y_part = None if args.T_part is None else F.softmax(y_pred.log() * (args.T / args.T_part), dim=1)   # EXPERIMENT: softmax(z / T_part)
+X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight, y_part=y_part)
 X_cond, y_cond = X_cond.float(), y_cond.float()
 all_node_num = len(X_cond)
 graph = Data(x=X_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(X_cond.device),
