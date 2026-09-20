@@ -3,52 +3,40 @@ from scr.models import *
 from scr.utils import *
 from scr.module import *
 from scr.dataloader import *
+from scr.teacher import get_teacher_labels
+from scr.partition import partition
 
 args = para()
-args.result_path =  f'./results/'
-args = create_folder(args)
 args = device_setting(args)
 seed_everything(args.seed)
+
+## hyperparameters (validated per dataset x density; before the data, feature normalisation is a dataset property)
+args = hyperpara(args)
+print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
+      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout:g}')
 
 ## data
 datasets = get_dataset(args)
 args, data, data_val, data_test = set_dataset(args, datasets)
 
-##hyper para
-args = hyperpara(args) if args.generate_adj == 1 else hyperpara_noadj(args)
-
-## cond data
-graph_file = args.folder+f'{args.dataset_name}_{args.ratio}.pt' if args.generate_adj == 1 else args.folder+f'{args.dataset_name}_noadj_{args.ratio}.pt'
-# if os.path.exists(graph_file):
-#     graph = torch.load(graph_file, map_location= args.device)
-# else:
+## condensation
 begin = time.time()
-args, label_cond = generate_labels_syn(args, data)
-H = conv_graph_multi(args, data)
-model = linear_model(args, H, data, data_test)
-H_aug, y_aug, conf = data_assessment(args, data, model, H)
-M_norm = mask_generation_conf(H_aug, y_aug, args, 'spectral', conf)
-h = torch.spmm(M_norm.to(args.device), H_aug.to(args.device))
-if args.generate_adj == 1:
-    a = get_adj(h, args.adj_T)
-    x = get_feature(a, h, args.alpha)
-    graph = Data(x=x, y=label_cond, edge_index=a.nonzero().t(), edge_attr=a[a.nonzero()[:,0], a.nonzero()[:,1]], train_mask=torch.ones(len(x), dtype=torch.bool))
-else:
-    graph = Data(x=h, y=label_cond, edge_index=torch.eye(len(h)).nonzero().t(), edge_attr=torch.ones(len(h)), train_mask=torch.ones(len(h), dtype=torch.bool))
+budget_node_num = budget(args)
+H0, H1, H2 = conv_graph_multi(args, data)
 
-args.cond_time = time.time()-begin
-print('Condensation time:',  f'{args.cond_time:.3f}', 's')
-print('#edges:', int(torch.sum(a).item())) if args.generate_adj == 1 else print('No adj')
-print('#training labels:', data.train_mask.sum().item())
-print('#augmented labels:', len(H_aug))
-args.changed_label = len(H_aug)-data.train_mask.sum().item()
-# torch.save(graph, graph_file)
+P = get_teacher_labels(H2, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
+x_cond, y_cond = partition(H2, P, budget_node_num, args.kl_weight)
+x_cond, y_cond = x_cond.float(), y_cond.float()
+all_node_num = len(x_cond)
+graph = Data(x=x_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(x_cond.device),
+             edge_attr=torch.ones(all_node_num, device=x_cond.device), train_mask=torch.ones(all_node_num, dtype=torch.bool, device=x_cond.device))
+args.cond_time = time.time() - begin
+print(f'condensed: {all_node_num} nodes (budget {budget_node_num})  time {args.cond_time:.2f} s')
 
-# model training
-graph=graph.to(args.device)
-acc= []
-for repeat in range(args.repeat): 
+## student
+graph = graph.to(args.device)
+acc = []
+for repeat in range(args.repeat):
     model = GCN(data.num_features, args.n_dim, args.num_class, 2, args.dropout).to(args.device)
-    args.test_gnn = model.__class__.__name__
     acc.append(model_training(model, args, data, graph, data_val, data_test))
-result_record(args, acc)
+print(f'== {args.dataset_name} r={args.ratio:g}: {100 * np.mean(acc):.2f} +- {100 * np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')

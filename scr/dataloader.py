@@ -1,4 +1,3 @@
-from ast import arg
 from scr.para import *
 from scr.module import *
 from scr.models import *
@@ -12,7 +11,7 @@ def get_dataset(args):
         data = dataset[0]
 
     elif args.dataset_name in ['citeseer']:
-        dataset = Planetoid(args.raw_data_dir, 'citeseer')
+        dataset = Planetoid(args.raw_data_dir, 'citeseer', transform=T.NormalizeFeatures())
         data = dataset[0]
 
     elif args.dataset_name == "arxiv":
@@ -119,10 +118,10 @@ def get_dataset(args):
 
         # feat
         feat = np.load(dataset_str+'feats.npy')
-        # feat_train = feat[idx_train]
-        # scaler = StandardScaler()
-        # scaler.fit(feat_train)
-        # feat = scaler.transform(feat)
+        feat_train = feat[idx_train]
+        scaler = StandardScaler()
+        scaler.fit(feat_train)
+        feat = scaler.transform(feat)
 
         dataset = Data(x=torch.FloatTensor(feat).float(), 
                         edge_index=torch.LongTensor(np.array(adj_full.nonzero())), 
@@ -133,13 +132,6 @@ def get_dataset(args):
         transform = T.ToUndirected()
         dataset = transform(dataset)
         data = inductive_processing(dataset)
-
-    elif args.dataset_name == "products":
-        dataset = PygNodePropPredDataset(name="ogbn-products", root=args.raw_data_dir+'pygdata')
-        dataset.data.y.squeeze_()
-        data = dataset[0]
-
-
     return data
 
 
