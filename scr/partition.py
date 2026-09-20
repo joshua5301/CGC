@@ -30,10 +30,11 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     assign = kmeans_init(X, cluster_num)
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
 
+    global_center = geometric_medians(X, torch.zeros(len(X), dtype=torch.long, device=X.device), 1)
+    dist_scale = (X - global_center).norm(dim=1).mean()
+    global_label = y_pred.mean(0)
+    kl_scale = (entropy.squeeze(1) - y_pred @ global_label.log()).mean()
     centers = geometric_medians(X, assign, cluster_num)
-    dist_scale = (X - centers[assign]).norm(dim=1).mean()
-    labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
-    kl_scale = (entropy.squeeze(1) - (y_pred * labels[assign].log()).sum(1)).mean().clamp(min=EPS)
     for _ in range(iters):
         labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
         costs = []
