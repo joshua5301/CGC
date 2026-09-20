@@ -16,22 +16,18 @@ def get_kernel_values(A: torch.Tensor, B: torch.Tensor, kernel_kind: str):
         na = A.norm(dim=1, keepdim=True).clamp(min=EPS)
         nb = B.norm(dim=1).unsqueeze(0).clamp(min=EPS)
         cos = ((A @ B.T) / (na * nb)).clamp(-1 + EPS, 1 - EPS)
-        scale = (na * nb) / d
         th = torch.acos(cos)
         cos = (torch.sin(th) + (math.pi - th) * torch.cos(th)) / math.pi
-        return scale * cos
+        return cos
     if kernel_kind == 'linear':
         return A @ B.T
     raise ValueError(f'unknown teacher kernel {kernel_kind}')
 
-def fit_logistic(X_kernel_train: torch.Tensor, y_train: torch.Tensor, gamma: float, steps=1000, tol=1e-6):
+def fit_logistic(X_kernel_train: torch.Tensor, y_train: torch.Tensor, gamma: float, steps=1000):
     X_kernel_train, y_train = X_kernel_train.double(), y_train.double()
     n, dim = X_kernel_train.shape
     W = torch.zeros(dim, y_train.shape[1], dtype=X_kernel_train.dtype, device=X_kernel_train.device).requires_grad_(True)
-    opt = torch.optim.LBFGS(
-        [W], max_iter=steps, history_size=20, tolerance_grad=tol,
-        tolerance_change=tol ** 1.4, line_search_fn='strong_wolfe'
-    )
+    opt = torch.optim.LBFGS([W], max_iter=steps, line_search_fn='strong_wolfe')
     def closure():
         opt.zero_grad()
         loss = F.cross_entropy(X_kernel_train @ W, y_train) + gamma / n * (W ** 2).sum()
