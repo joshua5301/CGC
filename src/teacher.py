@@ -43,8 +43,7 @@ def fit_logistic(X_kernel_train: torch.Tensor, y_train: torch.Tensor, gamma: flo
     opt.step(closure)
     return W.detach()
 
-def get_teacher_labels(X: torch.Tensor, train_mask: torch.Tensor, y: torch.Tensor,
-                       kernel_kind='erf', gamma=0.1, temp=1.0, basis_num=3000):
+def get_kernel_features(X: torch.Tensor, kernel_kind='erf', basis_num=3000):
     X = X.double()
     B = X if basis_num >= len(X) else X[torch.randperm(len(X))[:basis_num]]
 
@@ -57,9 +56,12 @@ def get_teacher_labels(X: torch.Tensor, train_mask: torch.Tensor, y: torch.Tenso
     feats = []
     for chunk in X.split(8192):
         feats.append(get_kernel_values(chunk, B, kernel_kind) @ T)
-    X_kernel = torch.cat(feats)
+    return torch.cat(feats)
 
-    y_train = F.one_hot(y[train_mask], int(y.max()) + 1).to(X.dtype)
+def get_teacher_labels(X: torch.Tensor, train_mask: torch.Tensor, y: torch.Tensor,
+                       kernel_kind='erf', gamma=0.1, temp=1.0, basis_num=3000):
+    X_kernel = get_kernel_features(X, kernel_kind, basis_num)
+    y_train = F.one_hot(y[train_mask], int(y.max()) + 1).to(X_kernel.dtype)
     W = fit_logistic(X_kernel[train_mask], y_train, gamma)
     logits = X_kernel @ W
     return F.softmax(logits / temp, dim=1)

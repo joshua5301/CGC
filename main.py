@@ -1,10 +1,10 @@
-from scr.hyperparams import *
-from scr.models import *
-from scr.utils import *
-from scr.module import *
-from scr.dataloader import *
-from scr.teacher import get_teacher_labels
-from scr.partition import partition
+from src.hyperparams import *
+from src.models import *
+from src.utils import *
+from src.module import *
+from src.dataloader import *
+from src.teacher import get_teacher_labels
+from src.partition import partition
 
 args = get_hyperparams()
 args = device_setting(args)
