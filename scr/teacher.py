@@ -34,7 +34,7 @@ def fit_logistic(X_kernel_train: torch.Tensor, y_train: torch.Tensor, gamma: flo
     )
     def closure():
         opt.zero_grad()
-        loss = F.cross_entropy(X_kernel_train @ W, y_train) + gamma * (W ** 2).sum()
+        loss = F.cross_entropy(X_kernel_train @ W, y_train) + gamma / n * (W ** 2).sum()
         loss.backward()
         return loss
     opt.step(closure)
