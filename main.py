@@ -12,7 +12,7 @@ seed_everything(args.seed)
 
 args = override_to_best_hyperparams(args)
 print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
-      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout:g}')
+      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout}')
 
 ## data
 datasets = get_dataset(args)
@@ -34,10 +34,17 @@ graph = Data(x=x_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t(
 args.cond_time = time.time() - begin
 print(f'condensed: {all_node_num} nodes (budget {budget_node_num})  time {args.cond_time:.2f} s')
 
-## student
+## student (dropout list: every value is trained, the one with the best mean validation accuracy is reported)
 graph = graph.to(args.device)
-acc = []
-for repeat in range(args.repeat):
-    model = GCN(data.num_features, args.n_dim, args.num_class, 2, args.dropout).to(args.device)
-    acc.append(model_training(model, args, data, graph, data_val, data_test))
-print(f'== {args.dataset_name} r={args.ratio:g}: {100 * np.mean(acc):.2f} +- {100 * np.std(acc, ddof=1) if len(acc) > 1 else 0.0:.2f}')
+results = {}
+for dropout in [float(v) for v in str(args.dropout).split(',')]:
+    args.dropout = dropout
+    runs = []
+    for repeat in range(args.repeat):
+        model = GCN(data.num_features, args.n_dim, args.num_class, 2, dropout).to(args.device)
+        runs.append(model_training(model, args, data, graph, data_val, data_test))
+    val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
+    results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)
+    print(f'-- dropout {dropout:g}: val {100 * val:.2f}  test {100 * np.mean(test):.2f} +- {100 * results[dropout][2]:.2f}')
+best = max(results, key=lambda d: results[d][0])
+print(f'== {args.dataset_name} r={args.ratio:g}: {100 * results[best][1]:.2f} +- {100 * results[best][2]:.2f}  (dropout {best:g}, val {100 * results[best][0]:.2f})')

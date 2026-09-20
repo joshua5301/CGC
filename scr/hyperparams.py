@@ -15,7 +15,7 @@ def get_hyperparams():
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--dropout', type=float, default=None)
+    parser.add_argument('--dropout', type=str, default=None, help='one value, or a comma list swept on validation')
     parser.add_argument('--teacher_kernel', type=str, default=None, help='linear, erf, relu')
     parser.add_argument('--gamma', type=float, default=None, help='teacher regularization coefficient')
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')

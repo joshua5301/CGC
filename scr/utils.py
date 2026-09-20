@@ -81,7 +81,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
         if epoch%100 == 0 :
             print(f'Epoch: {epoch:03d}, Loss: {loss.item():.4f}, Train: {train_acc:.4f}, Val: {best_val_acc:.4f}, Test: {test_acc:.4f}')
     print()
-    return test_acc
+    return best_val_acc, test_acc
 
 def test_inductive(args, model, data_val, data_test, k=2):
     with torch.no_grad():

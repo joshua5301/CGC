@@ -25,7 +25,7 @@ def cell_means(P: torch.Tensor, assign: torch.Tensor, k: int):
     counts = torch.bincount(assign, minlength=k).clamp(min=1).to(P.dtype)
     return torch.zeros(k, P.shape[1], dtype=P.dtype, device=P.device).index_add_(0, assign, P) / counts.unsqueeze(1)
 
-def partition(X: torch.Tensor, P: torch.Tensor, k: int, kl_weight=0.5, iters=20):
+def partition(X: torch.Tensor, P: torch.Tensor, k: int, kl_weight=0.5, iters=100):
     X, P = X.double(), P.double().clamp(min=EPS)
     assign = kmeans_init(X, k)
     entropy = (P * P.log()).sum(1, keepdim=True)
