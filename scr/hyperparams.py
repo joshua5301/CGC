@@ -17,7 +17,6 @@ def get_hyperparams():
     parser.add_argument('--teacher_kernel', type=str, default=None, help='linear, erf, relu')
     parser.add_argument('--gamma', type=float, default=None, help='teacher regularization coefficient')
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
-    parser.add_argument('--T_part', type=float, default=None, help='EXPERIMENT: temperature used by the KL term of the partition (default: same as T)')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
 
