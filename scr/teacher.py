@@ -26,16 +26,15 @@ def get_kernel_values(A: torch.Tensor, B: torch.Tensor, kernel_kind: str):
 
 def fit_logistic(X_kernel_train: torch.Tensor, y_train: torch.Tensor, gamma: float, steps=1000, tol=1e-6):
     X_kernel_train, y_train = X_kernel_train.double(), y_train.double()
-    n, d = X_kernel_train.shape
-    g = gamma * X_kernel_train.norm() ** 2 / (n * d)
-    W = torch.zeros(d, y_train.shape[1], dtype=X_kernel_train.dtype, device=X_kernel_train.device).requires_grad_(True)
+    n, dim = X_kernel_train.shape
+    W = torch.zeros(dim, y_train.shape[1], dtype=X_kernel_train.dtype, device=X_kernel_train.device).requires_grad_(True)
     opt = torch.optim.LBFGS(
         [W], max_iter=steps, history_size=20, tolerance_grad=tol,
         tolerance_change=tol ** 1.4, line_search_fn='strong_wolfe'
     )
     def closure():
         opt.zero_grad()
-        loss = F.cross_entropy(X_kernel_train @ W, y_train) + 0.5 * g * (W ** 2).sum()
+        loss = F.cross_entropy(X_kernel_train @ W, y_train) + gamma * (W ** 2).sum()
         loss.backward()
         return loss
     opt.step(closure)

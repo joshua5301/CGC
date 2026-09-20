@@ -12,7 +12,7 @@ seed_everything(args.seed)
 
 args = override_to_best_hyperparams(args)
 print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
-      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout}')
+      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropouts={args.dropouts}')
 
 ## data
 datasets = get_dataset(args)
@@ -34,11 +34,10 @@ graph = Data(x=x_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t(
 args.cond_time = time.time() - begin
 print(f'condensed: {all_node_num} nodes (budget {budget_node_num})  time {args.cond_time:.2f} s')
 
-## student (dropout list: every value is trained, the one with the best mean validation accuracy is reported)
+## student
 graph = graph.to(args.device)
 results = {}
-for dropout in [float(v) for v in str(args.dropout).split(',')]:
-    args.dropout = dropout
+for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     runs = []
     for repeat in range(args.repeat):
         model = GCN(data.num_features, args.n_dim, args.num_class, 2, dropout).to(args.device)

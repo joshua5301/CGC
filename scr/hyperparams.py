@@ -15,7 +15,7 @@ def get_hyperparams():
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--dropout', type=str, default=None, help='one value, or a comma list swept on validation')
+    parser.add_argument('--dropouts', type=str, default=None, help='comma-separated dropout values')
     parser.add_argument('--teacher_kernel', type=str, default=None, help='linear, erf, relu')
     parser.add_argument('--gamma', type=float, default=None, help='teacher regularization coefficient')
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
@@ -26,26 +26,26 @@ def get_hyperparams():
     return args
 
 BEST_HYPERPARAMS_DICT = {
-    ('cora',     0.013):  ('relu',  0.1,    1.0,  1.0,  0.9),
-    ('cora',     0.026):  ('relu',  0.01,   2.0,  0.2,  0.9),
-    ('cora',     0.052):  ('relu',  0.01,   1.0,  2.0,  0.9),
-    ('citeseer', 0.009):  ('erf',   10.0,   0.25, 0.2,  0.3),
-    ('citeseer', 0.018):  ('erf',   10.0,   0.25, 0.2,  0.1),
-    ('citeseer', 0.036):  ('erf',   3.0,    0.25, 0.2,  0.3),
-    ('arxiv',    0.0005): ('erf',   1e-3,   0.25, 0.5,  0.7),
-    ('arxiv',    0.0025): ('relu',  1e-4,   0.25, 0.2,  0.3),
-    ('arxiv',    0.005):  ('erf',   1e-3,   1.0,  0.5,  0.1),
-    ('flickr',   0.001):  ('relu',  0.01,   1.0,  0.3,  0.3),
-    ('flickr',   0.005):  ('relu',  0.1,    1.0,  0.3,  0.0),
-    ('flickr',   0.01):   ('relu',  0.1,    1.0,  0.3,  0.0),
-    ('reddit',   0.0005): ('erf',   1e-3,   1.0,  0.3,  0.1),
-    ('reddit',   0.001):  ('erf',   1e-4,   1.0,  1.0,  0.3),
-    ('reddit',   0.002):  ('erf',   0.01,   1.0,  1.0,  0.1),
+    ('cora',     0.013):  ('relu',  0.1,    1.0,  1.0,  '0.9'),
+    ('cora',     0.026):  ('relu',  0.01,   2.0,  0.2,  '0.9'),
+    ('cora',     0.052):  ('relu',  0.01,   1.0,  2.0,  '0.9'),
+    ('citeseer', 0.009):  ('erf',   10.0,   0.25, 0.2,  '0.3'),
+    ('citeseer', 0.018):  ('erf',   10.0,   0.25, 0.2,  '0.1'),
+    ('citeseer', 0.036):  ('erf',   3.0,    0.25, 0.2,  '0.3'),
+    ('arxiv',    0.0005): ('erf',   1e-3,   0.25, 0.5,  '0.7'),
+    ('arxiv',    0.0025): ('relu',  1e-4,   0.25, 0.2,  '0.3'),
+    ('arxiv',    0.005):  ('erf',   1e-3,   1.0,  0.5,  '0.1'),
+    ('flickr',   0.001):  ('relu',  0.01,   1.0,  0.3,  '0.3'),
+    ('flickr',   0.005):  ('relu',  0.1,    1.0,  0.3,  '0.0'),
+    ('flickr',   0.01):   ('relu',  0.1,    1.0,  0.3,  '0.0'),
+    ('reddit',   0.0005): ('erf',   1e-3,   1.0,  0.3,  '0.1'),
+    ('reddit',   0.001):  ('erf',   1e-4,   1.0,  1.0,  '0.3'),
+    ('reddit',   0.002):  ('erf',   0.01,   1.0,  1.0,  '0.1'),
 }
 
 def override_to_best_hyperparams(args):
     best = BEST_HYPERPARAMS_DICT[(args.dataset_name, args.ratio)]
-    for name, value in zip(['teacher_kernel', 'gamma', 'T', 'kl_weight', 'dropout'], best):
+    for name, value in zip(['teacher_kernel', 'gamma', 'T', 'kl_weight', 'dropouts'], best):
         if getattr(args, name) is None:
             setattr(args, name, value)
     return args
