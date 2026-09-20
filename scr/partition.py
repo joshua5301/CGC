@@ -31,13 +31,15 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
 
     centers = geometric_medians(X, assign, cluster_num)
-    scale = (X - centers[assign]).norm(dim=1).mean()
+    dist_scale = (X - centers[assign]).norm(dim=1).mean()
+    labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
+    kl_scale = (entropy.squeeze(1) - (y_pred * labels[assign].log()).sum(1)).mean().clamp(min=EPS)
     for _ in range(iters):
         labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
         costs = []
         for X_chunk, y_pred_chunk, ent_chunk in zip(X.split(8192), y_pred.split(8192), entropy.split(8192)):
-            dist = torch.cdist(X_chunk, centers) / scale
-            kl = ent_chunk - y_pred_chunk @ labels.log().T
+            dist = torch.cdist(X_chunk, centers) / dist_scale
+            kl = (ent_chunk - y_pred_chunk @ labels.log().T) / kl_scale
             costs.append(dist + kl_weight * kl)
         new_assign = torch.cat(costs).argmin(dim=1)
         moved = int((new_assign != assign).sum())
