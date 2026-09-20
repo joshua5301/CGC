@@ -13,12 +13,12 @@ def get_kernel_values(A: torch.Tensor, B: torch.Tensor, kernel_kind: str):
         r = 2 * S / torch.sqrt((1 + 2 * a) * (1 + 2 * b))
         return (2 / math.pi) * torch.asin(r.clamp(-1 + EPS, 1 - EPS))
     if kernel_kind == 'relu':
+        bandwidth = (B * B).sum(1).mean() / d
         na = A.norm(dim=1, keepdim=True).clamp(min=EPS)
         nb = B.norm(dim=1).unsqueeze(0).clamp(min=EPS)
         cos = ((A @ B.T) / (na * nb)).clamp(-1 + EPS, 1 - EPS)
         th = torch.acos(cos)
-        cos = (torch.sin(th) + (math.pi - th) * torch.cos(th)) / math.pi
-        return cos
+        return (na * nb) / (d * bandwidth) * (torch.sin(th) + (math.pi - th) * torch.cos(th)) / math.pi
     if kernel_kind == 'linear':
         return A @ B.T
     raise ValueError(f'unknown teacher kernel {kernel_kind}')
