@@ -1,4 +1,4 @@
-from scr.para import *
+from scr.hyperparams import *
 from scr.models import *
 from scr.utils import *
 from scr.module import *
@@ -6,12 +6,11 @@ from scr.dataloader import *
 from scr.teacher import get_teacher_labels
 from scr.partition import partition
 
-args = para()
+args = get_hyperparams()
 args = device_setting(args)
 seed_everything(args.seed)
 
-## hyperparameters (validated per dataset x density; before the data, feature normalisation is a dataset property)
-args = hyperpara(args)
+args = override_to_best_hyperparams(args)
 print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
       f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropout={args.dropout:g}')
 
@@ -25,6 +24,8 @@ budget_node_num = budget(args)
 H0, H1, H2 = conv_graph_multi(args, data)
 
 P = get_teacher_labels(H2, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
+if data_val is None:
+    print(f'teacher test acc: {100 * (P.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
 x_cond, y_cond = partition(H2, P, budget_node_num, args.kl_weight)
 x_cond, y_cond = x_cond.float(), y_cond.float()
 all_node_num = len(x_cond)

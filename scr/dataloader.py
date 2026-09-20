@@ -1,4 +1,4 @@
-from scr.para import *
+from scr.hyperparams import *
 from scr.module import *
 from scr.models import *
 

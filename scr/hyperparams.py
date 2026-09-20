@@ -1,11 +1,10 @@
 import argparse
 
-def para():
+def get_hyperparams():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_name', type=str, default="reddit", help= 
-    'cora, citeseer, arxiv, flickr, reddit')
-    parser.add_argument('--ratio', type=float, default= 0.001)
-    # cora 0.026 citeseer 0.018  arxiv 0.0025 flickr 0.005  reddit 0.001
+    parser.add_argument('--dataset_name', type=str, default="reddit",
+                        help='cora, citeseer, arxiv, flickr, reddit')
+    parser.add_argument('--ratio', type=float, default=0.001)
     parser.add_argument('--raw_data_dir', type=str, default="./data/")
     parser.add_argument('--epoch', type=int, default=1000)
     parser.add_argument('--eval_every', type=int, default=10, help='evaluate val/test every k epochs (best-val epoch)')
@@ -16,17 +15,17 @@ def para():
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--dropout', type=float, default=0.5)
-    parser.add_argument('--teacher_kernel', type=str, default="erf", help='linear, erf, relu')
-    parser.add_argument('--gamma', type=float, default=0.1, help='teacher regularization coefficient')
-    parser.add_argument('--T', type=float, default=1.0, help='label smoothing/sharpening temperature')
-    parser.add_argument('--kl_weight', type=float, default=0.5, help='weight of label KL loss during clustering')
-    parser.add_argument('--basis', type=int, default=3000, help='Nystrom inducing points of the teacher (random pool rows)')
+    parser.add_argument('--dropout', type=float, default=None)
+    parser.add_argument('--teacher_kernel', type=str, default=None, help='linear, erf, relu')
+    parser.add_argument('--gamma', type=float, default=None, help='teacher regularization coefficient')
+    parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
+    parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
+    parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
 
     args = parser.parse_args()
     return args
 
-HYPER = {
+BEST_HYPERPARAMS_DICT = {
     ('cora',     0.013):  ('relu',  0.1,    1.0,  1.0,  0.9),
     ('cora',     0.026):  ('relu',  0.01,   2.0,  0.2,  0.9),
     ('cora',     0.052):  ('relu',  0.01,   1.0,  2.0,  0.9),
@@ -44,7 +43,9 @@ HYPER = {
     ('reddit',   0.002):  ('erf',   0.01,   1.0,  1.0,  0.1),
 }
 
-def hyperpara(args):
-    key = (args.dataset_name, args.ratio)
-    args.teacher_kernel, args.gamma, args.T, args.kl_weight, args.dropout = HYPER[key]
+def override_to_best_hyperparams(args):
+    best = BEST_HYPERPARAMS_DICT[(args.dataset_name, args.ratio)]
+    for name, value in zip(['teacher_kernel', 'gamma', 'T', 'kl_weight', 'dropout'], best):
+        if getattr(args, name) is None:
+            setattr(args, name, value)
     return args

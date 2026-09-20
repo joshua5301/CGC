@@ -1,4 +1,4 @@
-from scr.para import *
+from scr.hyperparams import *
 from scr.module import *
 from scr.models import *
 
@@ -49,7 +49,7 @@ def normalize_adj_sparse(data):
     sparsecol=torch.LongTensor(sparse_mx.col).unsqueeze(1)
     sparseconcat=torch.cat((sparserow, sparsecol),1)
     sparsedata=torch.FloatTensor(sparse_mx.data)
-    adj = torch.sparse.FloatTensor(sparseconcat.t(),sparsedata,torch.Size(sparse_mx.shape))
+    adj = torch.sparse_coo_tensor(sparseconcat.t(), sparsedata, sparse_mx.shape)
     return adj
 
 

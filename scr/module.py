@@ -1,9 +1,6 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-import os
-import csv
-import faiss
 import time
 import json
 import scipy.sparse as sp
