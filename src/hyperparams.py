@@ -27,7 +27,7 @@ def get_hyperparams():
 BEST_HYPERPARAMS_DICT = {
     # val-selected per density from the shared grid: gamma {0.01, 0.1, 1}, T {0.2, 0.5, 1, 2}, kl {0.1, 0.2, 0.5, 1, 2}; dropout {0.1, 0.5, 0.9}
     #                       kernel   gamma   T     kl    dropout
-    ('cora',     0.013):  ('relu',  0.01,   1.0,  0.2,  '0.9'),
+    ('cora',     0.013):  ('relu',  0.01,   1.0,  2.0,  '0.9'),
     ('cora',     0.026):  ('relu',  0.01,   1.0,  0.2,  '0.9'),
     ('cora',     0.052):  ('relu',  0.01,   1.0,  1.0,  '0.9'),
     ('citeseer', 0.009):  ('erf',   0.1,    0.2,  0.2,  '0.1'),
