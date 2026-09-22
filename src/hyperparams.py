@@ -19,7 +19,14 @@ def get_hyperparams():
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
-    parser.add_argument('--edges', type=str, default='none', help="condensed edges: none (A' = I on A^2 X) or coarsen (A' = cell-averaged propagation matrix on A X)")
+    parser.add_argument('--edges', type=str, default='none', choices=['none', 'coarsen', 'ot_1hop'],
+                        help="condensed edges: none (A' = I on A^2 X), coarsen (A' = cell-averaged propagation matrix on A X), "
+                             "ot_1hop (1-hop neighbourhood-OT objective on raw X: representatives, row-stochastic A' and partition by block descent)")
+    parser.add_argument('--root_weight', type=float, default=1.0, help='ot_1hop: alpha (root distance)')
+    parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
+    parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
+    parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
+    parser.add_argument('--max_lp_variables', type=int, default=2_000_000, help='ot_1hop: guard on the largest cell LP')
     parser.add_argument('--gammas', type=str, default='0.0001,0.001,0.01,0.1,1', help='diagnostics: comma list of gamma values')
 
     args = parser.parse_args()

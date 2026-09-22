@@ -53,6 +53,14 @@ def normalize_adj_sparse(data):
     return adj
 
 
+def attach_transition(data):
+    from src.partition_ot import build_transition, transition_to_edges
+    P, _ = build_transition(data.edge_index.cpu().numpy(), data.x.shape[0])
+    ei, ea = transition_to_edges(P)
+    data.edge_index, data.edge_attr = torch.from_numpy(ei).long().to(data.x.device), torch.from_numpy(ea).float().to(data.x.device)
+    return data
+
+
 def attach_propagation(data):
     adj = normalize_adj_sparse(data).coalesce().to(data.x.device)
     data.edge_index, data.edge_attr = adj.indices(), adj.values()

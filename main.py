@@ -6,6 +6,7 @@ from src.dataloader import *
 from src.teacher import get_teacher_labels
 from src.partition import partition, geometric_medians
 from src.edges import coarsen, to_graph
+from src.partition_ot import build_transition, transition_to_edges, partition_ot_1hop
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -32,6 +33,18 @@ X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
 all_node_num = len(X_cond)
 if args.edges == 'none':
     edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(X_cond.device), torch.ones(all_node_num, device=X_cond.device)
+elif args.edges == 'ot_1hop':
+    # 1-hop neighbourhood-OT objective on the raw features; the GRIP partition (on A^2 X) is the initial assignment
+    P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
+    print(f'transition: {meta}')
+    out = partition_ot_1hop(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(),
+                            args.root_weight, args.neighbor_weight, args.label_weight, args.outer_iters, args.max_lp_variables)
+    X_cond, y_cond = torch.from_numpy(out['H_cond']).to(args.device), torch.from_numpy(out['Y_cond']).to(args.device)
+    ei, ea = transition_to_edges(out['P_cond'])
+    edge_index, edge_attr = torch.from_numpy(ei).long().to(args.device), torch.from_numpy(ea).float().to(args.device)
+    data = attach_transition(data)
+    if data_val is not None:
+        data_val, data_test = attach_transition(data_val), attach_transition(data_test)
 else:
     # A' on the one-hop features: representatives of A X, edges = cell-averaged propagation matrix, so that A' X' ~ A^2 X cell-wise
     adj = normalize_adj_sparse(data).to(data.x.device)
@@ -51,7 +64,8 @@ results = {}
 for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     runs = []
     for repeat in range(args.repeat):
-        model = GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none').to(args.device)
+        model = (SAGE(data.num_features, args.n_dim, args.num_class, 2, dropout) if args.edges == 'ot_1hop' else
+                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none')).to(args.device)
         runs.append(model_training(model, args, data, graph, data_val, data_test))
     val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
     results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)
