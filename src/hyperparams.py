@@ -19,6 +19,7 @@ def get_hyperparams():
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
+    parser.add_argument('--edges', type=str, default='none', help="condensed edges: none (A' = I on A^2 X) or coarsen (A' = cell-averaged propagation matrix on A X)")
     parser.add_argument('--gammas', type=str, default='0.0001,0.001,0.01,0.1,1', help='diagnostics: comma list of gamma values')
 
     args = parser.parse_args()

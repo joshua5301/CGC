@@ -4,7 +4,8 @@ from src.utils import *
 from src.module import *
 from src.dataloader import *
 from src.teacher import get_teacher_labels
-from src.partition import partition
+from src.partition import partition, geometric_medians
+from src.edges import coarsen, to_graph
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -12,7 +13,7 @@ seed_everything(args.seed)
 
 args = override_to_best_hyperparams(args)
 print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
-      f'kl_weight={args.kl_weight:g} | student lr={args.lr:g} wd={args.weight_decay:g} dropouts={args.dropouts}')
+      f'kl_weight={args.kl_weight:g} edges={args.edges} | student lr={args.lr:g} wd={args.weight_decay:g} dropouts={args.dropouts}')
 
 ## data
 datasets = get_dataset(args)
@@ -27,13 +28,22 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
-X_cond, y_cond = X_cond.float(), y_cond.float()
+X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
 all_node_num = len(X_cond)
-graph = Data(x=X_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(X_cond.device),
-             edge_attr=torch.ones(all_node_num, device=X_cond.device), train_mask=torch.ones(all_node_num, dtype=torch.bool, device=X_cond.device))
+if args.edges == 'none':
+    edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(X_cond.device), torch.ones(all_node_num, device=X_cond.device)
+else:
+    # A' on the one-hop features: representatives of A X, edges = cell-averaged propagation matrix, so that A' X' ~ A^2 X cell-wise
+    adj = normalize_adj_sparse(data).to(data.x.device)
+    X_cond = geometric_medians(H1.double(), assign, all_node_num)
+    edge_index, edge_attr = to_graph(coarsen(adj, assign, all_node_num).float())
+    data = attach_propagation(data)
+    if data_val is not None:
+        data_val, data_test = attach_propagation(data_val), attach_propagation(data_test)
+X_cond, y_cond = X_cond.float(), y_cond.float()
+graph = Data(x=X_cond, y=y_cond, edge_index=edge_index, edge_attr=edge_attr, train_mask=torch.ones(all_node_num, dtype=torch.bool, device=X_cond.device))
 args.cond_time = time.time() - begin
-print(f'condensed: {all_node_num} nodes (budget {budget_node_num})  time {args.cond_time:.2f} s')
+print(f'condensed: {all_node_num} nodes (budget {budget_node_num}), {len(edge_attr)} edges  time {args.cond_time:.2f} s')
 
 ## student
 graph = graph.to(args.device)
@@ -41,7 +51,7 @@ results = {}
 for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     runs = []
     for repeat in range(args.repeat):
-        model = GCN(data.num_features, args.n_dim, args.num_class, 2, dropout).to(args.device)
+        model = GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none').to(args.device)
         runs.append(model_training(model, args, data, graph, data_val, data_test))
     val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
     results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)

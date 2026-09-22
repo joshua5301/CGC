@@ -76,7 +76,7 @@ def train(model, graph):
 budget_node_num = budget(args)
 X = conv_graph_multi(args, data)[-1]
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
-X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
+X_cond, y_cond, _ = partition(X, y_pred, budget_node_num, args.kl_weight)
 X_cond, y_cond = X_cond.float(), y_cond.float()
 m = len(X_cond)
 graph = Data(x=X_cond, y=y_cond, edge_index=torch.eye(m).nonzero().t().to(X_cond.device), edge_attr=torch.ones(m, device=X_cond.device)).to(args.device)

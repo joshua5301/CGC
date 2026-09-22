@@ -1,17 +1,17 @@
 from src.module import *
 
 class GCN(torch.nn.Module):
-    def __init__(self, nin, nhid, nout, nlayers, dropout=0.5):
+    def __init__(self, nin, nhid, nout, nlayers, dropout=0.5, normalize=True):
         super().__init__()
         self.layers = torch.nn.ModuleList([])
 
         if nlayers == 1:
-            self.layers.append(GCNConv(nin, nout))
+            self.layers.append(GCNConv(nin, nout, normalize=normalize))
         else:
-            self.layers.append(GCNConv(nin, nhid)) 
+            self.layers.append(GCNConv(nin, nhid, normalize=normalize))
             for _ in range(nlayers - 2):
-                self.layers.append(GCNConv(nhid, nhid)) 
-            self.layers.append(GCNConv(nhid, nout))  
+                self.layers.append(GCNConv(nhid, nhid, normalize=normalize))
+            self.layers.append(GCNConv(nhid, nout, normalize=normalize))
         self.dropout = dropout
         self.initialize()
 

@@ -53,6 +53,12 @@ def normalize_adj_sparse(data):
     return adj
 
 
+def attach_propagation(data):
+    adj = normalize_adj_sparse(data).coalesce().to(data.x.device)
+    data.edge_index, data.edge_attr = adj.indices(), adj.values()
+    return data
+
+
 def model_training(model, args, data, graph, data_val=None, data_test=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val_acc = test_acc = 0

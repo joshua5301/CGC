@@ -54,4 +54,4 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     assign = remap[assign]
     X_cond = centers[keep]
     y_cond = cell_means(y_pred, assign, int(keep.sum()))
-    return X_cond, y_cond
+    return X_cond, y_cond, assign
