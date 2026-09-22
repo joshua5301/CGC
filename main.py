@@ -62,15 +62,17 @@ elif args.edges.startswith('structure'):
     # structure-aware partition from the message-passing risk bound: J = (alpha D_H + beta D_S + mu D_KL) / N on the
     # raw features H0 and the row-stochastic P; the GRIP partition (on A^2 X) is the initial assignment, the teacher is unchanged
     P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
+    assert not (args.struct_H == 'prop2' and args.struct_student == 'faithful'), 'prop2 features are outside the bound: use --struct_student transfer'
+    H_struct = H0 if args.struct_H == 'raw' else X
     if args.struct_coef == 'bound':
-        R = float(H0.norm(dim=1).max())
+        R = float(H_struct.norm(dim=1).max())
         alpha, beta = bound_coefficients(column_sum_max(P), 2, args.struct_abar, R, all_node_num)
         mu = 1.0
         print(f'transition: {meta}  bound coefficients: K 2, abar {args.struct_abar:g}, R {R:.3f} -> alpha {alpha:.4g} beta {beta:.4g} mu 1')
     else:
         alpha, beta, mu = args.root_weight, args.neighbor_weight, args.label_weight
-        print(f'transition: {meta}  surrogate coefficients alpha {alpha:g} beta {beta:g} mu {mu:g}')
-    out = structure_bound(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(), alpha, beta, mu,
+        print(f'transition: {meta}  features {args.struct_H}  surrogate coefficients alpha {alpha:g} beta {beta:g} mu {mu:g}')
+    out = structure_bound(H_struct.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(), alpha, beta, mu,
                           'identity' if args.edges == 'structure_identity' else 'learned_median', args.outer_iters, args.seed)
     assign = torch.from_numpy(out['assign']).to(X.device)
     y_cond = torch.from_numpy(out['Y_cond']).to(args.device)

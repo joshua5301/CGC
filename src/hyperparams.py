@@ -29,6 +29,8 @@ def get_hyperparams():
     parser.add_argument('--struct_student', type=str, default='faithful', choices=['faithful', 'transfer'],
                         help='structure_*: faithful = bias-free mean-aggregation student on (Hc, Q) served on (X, P) [the bound applies]; '
                              'transfer = the learned partition only, representatives on A^2 X, A\' = I, GCN as in the main table [empirical]')
+    parser.add_argument('--struct_H', type=str, default='raw', choices=['raw', 'prop2'],
+                        help='structure_*: features in D_H -- raw X (the faithful student input) or A^2 X (GRIP feature level; transfer student only)')
     parser.add_argument('--struct_coef', type=str, default='surrogate', choices=['surrogate', 'bound'],
                         help='structure_*: surrogate = alpha/beta/mu from --root_weight/--neighbor_weight/--label_weight; '
                              'bound = alpha, beta from the explicit constants (c_P, K=2, --struct_abar, R = max ||x||, m), mu = 1')

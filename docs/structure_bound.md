@@ -89,3 +89,28 @@ Every run is monotone stage by stage and the incremental J matches the full reco
 takes 20-35 s on a laptop CPU (a sweep 0.5 s, the medians 1.5 s). On this instance the structure term changes the
 partition (D_S halves) without changing downstream accuracy beyond the seed noise; the sweep over densities /
 coefficients / Q modes is the next step.
+
+### Sweep, cora / citeseer x 3 densities (A100, 3 seeds, dropout {0.1, 0.5, 0.9}, val-selected)
+
+Stage 1 = transfer student, identity Q, `H = raw X`, beta in {0, 1, 3, 10, 30} x mu in {1, 20}; stage 2 at the val-best
+(beta, mu): bound coefficients, learned-median Q, faithful student. `beta = 0` here is *not* the main-table GRIP partition:
+it re-optimises GRIP's cells on raw X with unnormalised alpha / mu, which on citeseer costs about 2 points.
+
+| | beta = 0 (raw-X refinement) | best-val beta > 0 (transfer) | bound coef. | faithful, best beta | main table (GRIP, 10 seeds) |
+|---|---|---|---|---|---|
+| cora 1.3 % | 84.63 (val 82.47) | 84.60 (30, 20; val 83.20) | 84.23 | 84.47 | 84.3 |
+| cora 2.6 % | 83.57 / 84.30 | 84.73 (3, 1; val 83.20) | 84.43 | 84.17 | 84.3 |
+| cora 5.2 % | 84.13 | 83.87 (3, 1; val 81.53) | 83.93 | 83.10 | 84.0 |
+| citeseer 0.9 % | 72.73 / 72.40 | 74.57 (1, 1; val 78.27) | 74.60 | 73.37 | 74.8 |
+| citeseer 1.8 % | 73.33 / 73.47 | 74.77 (1, 1; val 77.13) | 75.07 | 73.07 | 74.7 |
+| citeseer 3.6 % | 72.93 / 73.37 | 74.37 (30, 20; val 77.60) | 73.90 | 72.03 | 73.8 |
+
+Observations. (i) The structure term halves D_S at every density and raises validation accuracy by 0.5-3 points
+over the raw-X control, but against the main-table partition the test accuracy is flat (within seed noise) on
+both datasets. (ii) The explicit bound coefficients behave like a large beta and never collapse the partition,
+because alpha grows with c_P as well. (iii) The partitions are imbalanced (citeseer: one cell of up to 520 of 3327 nodes, cora: 325 of 2708), but the
+large cell is inherited from the GRIP initialisation (citeseer 3.6 %: max cell 343 at init); the raw-X refinement
+shrinks it, the structure term keeps it. Accuracy is not hurt at these sizes.
+(iv) The faithful bias-free student on raw X is 0.5-1.5 below the transfer path; learned-median Q does not help it.
+Next: the same comparison with `--struct_H prop2` (D_H on A^2 X, the GRIP feature level), so that beta = 0 is the
+main-table partition and beta > 0 isolates the structure term.
