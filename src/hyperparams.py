@@ -26,6 +26,8 @@ def get_hyperparams():
     parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
     parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
     parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
+    parser.add_argument('--ot_level', type=str, default='raw', choices=['raw', 'prop1'],
+                        help='ot_1hop: structural features, raw X or the one-hop mean P X (so that the student sees two hops, as the A\' = I path does)')
     parser.add_argument('--ot_solver', type=str, default='sinkhorn', choices=['exact', 'sinkhorn'],
                         help='ot_1hop: exact (LP / network simplex, CPU reference) or sinkhorn (entropic, GPU)')
     parser.add_argument('--ot_eps', type=float, default=0.02, help='ot_1hop sinkhorn: entropic scale, relative to the mean transport cost')

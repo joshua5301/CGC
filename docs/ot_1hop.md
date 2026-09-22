@@ -31,7 +31,12 @@ valid only right after the LP block). No adaptive normalisation, no entropic reg
   and the coupling storage estimate are printed before solving. Nothing is sampled or approximated when the guard trips —
   the run stops.
 
-Flags: `--edges ot_1hop --root_weight alpha --neighbor_weight beta --label_weight mu --outer_iters k --max_lp_variables n`.
+Flags: `--edges ot_1hop --root_weight alpha --neighbor_weight beta --label_weight mu --outer_iters k`,
+`--ot_solver {exact,sinkhorn}` (exact: LP / network simplex on the CPU, guarded by `--max_lp_variables`;
+sinkhorn: entropic, GPU, `--ot_eps` `--sink_iters` `--candidates`, see src/partition_ot_entropic.py), and
+`--ot_level {raw,prop1}`: the structural features are the raw X, or the one-hop mean P X so that the condensed
+node carries one hop and its edges the second -- the same two hops the A' = I path gets from A^2 X (the served
+graphs are lifted to P X as well).
 Tolerances are module constants (`MOVE_TOL`, `LP_FEAS_TOL`, `OBJ_TOL`, `EPS_PROB`, `COINCIDENT`, `MEDIAN_ITERS`).
 
 ## Checks (`python -m pytest tests -q`, 7 passed)

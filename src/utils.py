@@ -53,11 +53,17 @@ def normalize_adj_sparse(data):
     return adj
 
 
-def attach_transition(data):
+def attach_transition(data, propagate=False):
+    """Replace the edge weights by the row-stochastic 1-hop transition P used by the ot_1hop objective.
+    propagate=True also lifts the node features to P X, so that a one-hop student sees the same two hops
+    as the A' = I path (x = P X, neighbours weighted by P)."""
     from src.partition_ot import build_transition, transition_to_edges
     P, _ = build_transition(data.edge_index.cpu().numpy(), data.x.shape[0])
     ei, ea = transition_to_edges(P)
-    data.edge_index, data.edge_attr = torch.from_numpy(ei).long().to(data.x.device), torch.from_numpy(ea).float().to(data.x.device)
+    data.edge_index = torch.from_numpy(ei).long().to(data.x.device)
+    data.edge_attr = torch.from_numpy(ea).float().to(data.x.device)
+    if propagate:
+        data.x = torch.sparse.mm(torch.sparse_coo_tensor(data.edge_index.flip(0), data.edge_attr, (len(data.x),) * 2), data.x)
     return data
 
 

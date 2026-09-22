@@ -37,20 +37,26 @@ if args.edges == 'none':
 elif args.edges == 'ot_1hop':
     # 1-hop neighbourhood-OT objective on the raw features; the GRIP partition (on A^2 X) is the initial assignment
     P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
-    print(f'transition: {meta}')
+    print(f'transition: {meta}  level {args.ot_level}')
+    H_struct = H0
+    if args.ot_level == 'prop1':   # structural features P X: the condensed node carries one hop, its edges the second
+        Psp = torch.sparse_coo_tensor(torch.from_numpy(np.vstack(P.nonzero())).long().to(H0.device),
+                                      torch.from_numpy(P.data).float().to(H0.device), (len(H0), len(H0)))
+        H_struct = torch.sparse.mm(Psp, H0)
     if args.ot_solver == 'exact':
-        out = partition_ot_1hop(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(),
+        out = partition_ot_1hop(H_struct.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(),
                                 args.root_weight, args.neighbor_weight, args.label_weight, args.outer_iters, args.max_lp_variables)
     else:
-        out = partition_ot_1hop_entropic(H0, P, y_pred, all_node_num, assign.cpu().numpy(),
+        out = partition_ot_1hop_entropic(H_struct, P, y_pred, all_node_num, assign.cpu().numpy(),
                                          args.root_weight, args.neighbor_weight, args.label_weight, args.ot_eps,
                                          args.sink_iters, args.sink_iters, args.candidates, args.device, args.outer_iters)
     X_cond, y_cond = torch.from_numpy(out['H_cond']).to(args.device), torch.from_numpy(out['Y_cond']).to(args.device)
     ei, ea = transition_to_edges(out['P_cond'])
     edge_index, edge_attr = torch.from_numpy(ei).long().to(args.device), torch.from_numpy(ea).float().to(args.device)
-    data = attach_transition(data)
+    prop = args.ot_level == 'prop1'
+    data = attach_transition(data, prop)
     if data_val is not None:
-        data_val, data_test = attach_transition(data_val), attach_transition(data_test)
+        data_val, data_test = attach_transition(data_val, prop), attach_transition(data_test, prop)
 else:
     # A' on the one-hop features: representatives of A X, edges = cell-averaged propagation matrix, so that A' X' ~ A^2 X cell-wise
     adj = normalize_adj_sparse(data).to(data.x.device)
