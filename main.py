@@ -7,6 +7,7 @@ from src.teacher import get_teacher_labels
 from src.partition import partition, geometric_medians
 from src.edges import coarsen, to_graph
 from src.partition_ot import build_transition, transition_to_edges, partition_ot_1hop
+from src.partition_ot_entropic import partition_ot_1hop_entropic
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -14,7 +15,7 @@ seed_everything(args.seed)
 
 args = override_to_best_hyperparams(args)
 print(f'{args.dataset_name} r={args.ratio:g}: teacher {args.teacher_kernel} gamma={args.gamma:g} T={args.T:g} '
-      f'kl_weight={args.kl_weight:g} edges={args.edges} | student lr={args.lr:g} wd={args.weight_decay:g} dropouts={args.dropouts}')
+      f'kl_weight={args.kl_weight:g} edges={args.edges}' + (f' ({args.ot_solver}, beta={args.neighbor_weight:g} mu={args.label_weight:g})' if args.edges == 'ot_1hop' else '') + f' | student lr={args.lr:g} wd={args.weight_decay:g} dropouts={args.dropouts}')
 
 ## data
 datasets = get_dataset(args)
@@ -37,8 +38,13 @@ elif args.edges == 'ot_1hop':
     # 1-hop neighbourhood-OT objective on the raw features; the GRIP partition (on A^2 X) is the initial assignment
     P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
     print(f'transition: {meta}')
-    out = partition_ot_1hop(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(),
-                            args.root_weight, args.neighbor_weight, args.label_weight, args.outer_iters, args.max_lp_variables)
+    if args.ot_solver == 'exact':
+        out = partition_ot_1hop(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(),
+                                args.root_weight, args.neighbor_weight, args.label_weight, args.outer_iters, args.max_lp_variables)
+    else:
+        out = partition_ot_1hop_entropic(H0, P, y_pred, all_node_num, assign.cpu().numpy(),
+                                         args.root_weight, args.neighbor_weight, args.label_weight, args.ot_eps,
+                                         args.sink_iters, args.sink_iters, args.candidates, args.device, args.outer_iters)
     X_cond, y_cond = torch.from_numpy(out['H_cond']).to(args.device), torch.from_numpy(out['Y_cond']).to(args.device)
     ei, ea = transition_to_edges(out['P_cond'])
     edge_index, edge_attr = torch.from_numpy(ei).long().to(args.device), torch.from_numpy(ea).float().to(args.device)

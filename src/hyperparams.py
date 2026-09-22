@@ -26,6 +26,11 @@ def get_hyperparams():
     parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
     parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
     parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
+    parser.add_argument('--ot_solver', type=str, default='sinkhorn', choices=['exact', 'sinkhorn'],
+                        help='ot_1hop: exact (LP / network simplex, CPU reference) or sinkhorn (entropic, GPU)')
+    parser.add_argument('--ot_eps', type=float, default=0.02, help='ot_1hop sinkhorn: entropic scale, relative to the mean transport cost')
+    parser.add_argument('--sink_iters', type=int, default=100, help='ot_1hop sinkhorn: Sinkhorn / IBP iterations')
+    parser.add_argument('--candidates', type=int, default=16, help='ot_1hop sinkhorn: cells scored per node in the assignment block')
     parser.add_argument('--max_lp_variables', type=int, default=2_000_000, help='ot_1hop: guard on the largest cell LP')
     parser.add_argument('--gammas', type=str, default='0.0001,0.001,0.01,0.1,1', help='diagnostics: comma list of gamma values')
 
