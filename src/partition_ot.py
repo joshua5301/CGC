@@ -16,7 +16,8 @@ Block coordinate descent (every block is exact for its own sub-problem, so J nev
     adjacency   : per cell, one LP over the common row p_j and the couplings Gamma_t of its members
     features    : weighted geometric medians with weights collected from all couplings (per-column rollback)
 
-Everything is float64 numpy / scipy on the CPU; transport problems are unregularised LPs solved with HiGHS.
+Everything is float64 numpy / scipy on the CPU.  Pair transports are exact network-simplex solves (POT's ot.emd,
+HiGHS fallback); the joint cell LP is solved with HiGHS.
 This is the 1-hop normalised neighbourhood-OT objective, not tree mover's distance.
 """
 import time
@@ -72,8 +73,18 @@ def transition_to_edges(P):
 
 
 # ----------------------------------------------------------------------------- exact transport LPs
+try:
+    import ot as _pot                                              # POT: exact network simplex (ot.emd)
+except ImportError:                                                # fallback: HiGHS through scipy
+    _pot = None
+
+
 def _transport_lp(cost, a, b):
     """Exact W1 between weighted point sets: min <Gamma, cost>, Gamma 1 = a, Gamma^T 1 = b, Gamma >= 0."""
+    if _pot is not None:
+        a, b = a / a.sum(), b / b.sum()
+        G = _pot.emd(a, b, np.ascontiguousarray(cost), numItermax=1_000_000)
+        return float((G * cost).sum()), G
     n, m = cost.shape
     A_src = sp.kron(sp.eye(n), np.ones((1, m)), format='csr')
     A_dst = sp.kron(np.ones((1, n)), sp.eye(m), format='csr')

@@ -93,11 +93,9 @@ alpha / beta / mu were not tuned.
 
 ## Limitations / blockers
 
-- Exact pair OT through `scipy.optimize.linprog` costs 5-15 ms per call (solver overhead dominates at these sizes);
-  the assignment block needs one exact OT per node plus the pruned candidates (cora 1.3 %: 8.6 per node), the exact J
-  evaluation another N. Measured on cora 1.3 %: ~100 s per assignment block, ~40 s per exact evaluation, ~20 s per LP
-  block. This is the bottleneck; POT's network simplex (`ot.emd`) would be the drop-in exact replacement but is not
-  a dependency of the repository.
+- Pair transports use POT's exact network simplex (`ot.emd`, 0.2-0.7 ms per call at cora sizes; `pip install pot`);
+  without POT the code falls back to `scipy.optimize.linprog` (HiGHS, 5-15 ms per call, which made the cora 1.3 % run
+  above take 545 s: ~100 s per assignment block, ~40 s per exact evaluation). The joint cell LP stays on HiGHS.
 - The per-cell LP has `m * sum_{t in cell} deg(t) + m` variables; arxiv / reddit densities are far beyond the guard.
 - Downstream accuracy is a separate transfer question (the student that preserves the row-stochastic operator is
   `SAGE`; the main-table GCN is not evaluated on `P_cond`). No downstream claim is made from J alone.
