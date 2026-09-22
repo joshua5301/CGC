@@ -8,6 +8,7 @@ from src.partition import partition, geometric_medians
 from src.edges import coarsen, to_graph
 from src.partition_ot import build_transition, transition_to_edges, partition_ot_1hop
 from src.partition_ot_entropic import partition_ot_1hop_entropic
+from src.partition_struct import structure_bound, bound_coefficients, column_sum_max
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -57,6 +58,32 @@ elif args.edges == 'ot_1hop':
     data = attach_transition(data, prop)
     if data_val is not None:
         data_val, data_test = attach_transition(data_val, prop), attach_transition(data_test, prop)
+elif args.edges.startswith('structure'):
+    # structure-aware partition from the message-passing risk bound: J = (alpha D_H + beta D_S + mu D_KL) / N on the
+    # raw features H0 and the row-stochastic P; the GRIP partition (on A^2 X) is the initial assignment, the teacher is unchanged
+    P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
+    if args.struct_coef == 'bound':
+        R = float(H0.norm(dim=1).max())
+        alpha, beta = bound_coefficients(column_sum_max(P), 2, args.struct_abar, R, all_node_num)
+        mu = 1.0
+        print(f'transition: {meta}  bound coefficients: K 2, abar {args.struct_abar:g}, R {R:.3f} -> alpha {alpha:.4g} beta {beta:.4g} mu 1')
+    else:
+        alpha, beta, mu = args.root_weight, args.neighbor_weight, args.label_weight
+        print(f'transition: {meta}  surrogate coefficients alpha {alpha:g} beta {beta:g} mu {mu:g}')
+    out = structure_bound(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(), alpha, beta, mu,
+                          'identity' if args.edges == 'structure_identity' else 'learned_median', args.outer_iters, args.seed)
+    assign = torch.from_numpy(out['assign']).to(X.device)
+    y_cond = torch.from_numpy(out['Y_cond']).to(args.device)
+    if args.struct_student == 'faithful':
+        X_cond = torch.from_numpy(out['H_cond']).to(args.device)
+        ei, ea = transition_to_edges(out['Q'])
+        edge_index, edge_attr = torch.from_numpy(ei).long().to(args.device), torch.from_numpy(ea).float().to(args.device)
+        data = attach_transition(data)
+        if data_val is not None:
+            data_val, data_test = attach_transition(data_val), attach_transition(data_test)
+    else:
+        X_cond = geometric_medians(X.double(), assign, all_node_num)
+        edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(args.device), torch.ones(all_node_num, device=args.device)
 else:
     # A' on the one-hop features: representatives of A X, edges = cell-averaged propagation matrix, so that A' X' ~ A^2 X cell-wise
     adj = normalize_adj_sparse(data).to(data.x.device)
@@ -72,12 +99,14 @@ print(f'condensed: {all_node_num} nodes (budget {budget_node_num}), {len(edge_at
 
 ## student
 graph = graph.to(args.device)
+faithful = args.edges.startswith('structure') and args.struct_student == 'faithful'
 results = {}
 for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     runs = []
     for repeat in range(args.repeat):
         model = (SAGE(data.num_features, args.n_dim, args.num_class, 2, dropout) if args.edges == 'ot_1hop' else
-                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none')).to(args.device)
+                 PropGNN(data.num_features, args.n_dim, args.num_class, 2, dropout) if faithful else
+                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges in ('none', 'structure_identity', 'structure_median'))).to(args.device)
         runs.append(model_training(model, args, data, graph, data_val, data_test))
     val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
     results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)

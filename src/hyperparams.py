@@ -19,13 +19,20 @@ def get_hyperparams():
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
-    parser.add_argument('--edges', type=str, default='none', choices=['none', 'coarsen', 'ot_1hop'],
+    parser.add_argument('--edges', type=str, default='none', choices=['none', 'coarsen', 'ot_1hop', 'structure_identity', 'structure_median'],
                         help="condensed edges: none (A' = I on A^2 X), coarsen (A' = cell-averaged propagation matrix on A X), "
                              "ot_1hop (1-hop neighbourhood-OT objective on raw X: representatives, row-stochastic A' and partition by block descent)")
     parser.add_argument('--root_weight', type=float, default=1.0, help='ot_1hop: alpha (root distance)')
     parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
     parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
     parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
+    parser.add_argument('--struct_student', type=str, default='faithful', choices=['faithful', 'transfer'],
+                        help='structure_*: faithful = bias-free mean-aggregation student on (Hc, Q) served on (X, P) [the bound applies]; '
+                             'transfer = the learned partition only, representatives on A^2 X, A\' = I, GCN as in the main table [empirical]')
+    parser.add_argument('--struct_coef', type=str, default='surrogate', choices=['surrogate', 'bound'],
+                        help='structure_*: surrogate = alpha/beta/mu from --root_weight/--neighbor_weight/--label_weight; '
+                             'bound = alpha, beta from the explicit constants (c_P, K=2, --struct_abar, R = max ||x||, m), mu = 1')
+    parser.add_argument('--struct_abar', type=float, default=1.0, help='structure_* bound mode: common layer bound Lip(sigma) ||W||_2')
     parser.add_argument('--ot_level', type=str, default='raw', choices=['raw', 'prop1'],
                         help='ot_1hop: structural features, raw X or the one-hop mean P X (so that the student sees two hops, as the A\' = I path does)')
     parser.add_argument('--ot_solver', type=str, default='sinkhorn', choices=['exact', 'sinkhorn'],
