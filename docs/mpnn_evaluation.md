@@ -187,3 +187,21 @@ sweep, as well as each sweep's validation-selected winner. Separate reruns can
 have GPU numerical variation; a small difference alone does not establish a
 bottleneck. This experiment does not turn the original GRIP bound into a
 general-MPNN guarantee.
+
+### Paired confirmation on fresh student seeds
+
+`paired_ce.py` reads the saved weighted sweep's manifest and reuses its single
+GRIP artifact at Cora 0.052, gamma 0.01, T 2, coefficient 0.5, condensation seed
+0. It fixes dropout at 0.9 and trains uniform and cell-size CE on the exact same
+features, labels and identity edges. Default student seeds are 3 through 12
+(ten fresh seeds beyond the selection sweep), for 20 fits of 1000 epochs.
+Each pair resets the initialization/dropout RNG. GPU kernels may remain
+nondeterministic. Original data/split hashes must match the saved artifact.
+
+Runs are cached separately by code, artifact, training configuration and seed;
+increasing `--repeat` resumes existing fits. No additional hyperparameter
+selection occurs. The compact output reports means/sample standard deviations
+and paired differences (weighted minus uniform). `paired.csv` records every
+fit, while epoch logs remain in the output directory. Default output is
+`MyDrive/GRIP_cora_paired_ce`. This quantifies student-seed variability for one
+fixed condensation, not variation across condensations or dataset splits.
