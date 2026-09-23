@@ -129,3 +129,46 @@ os.chdir("/content/GRIP")
 ```
 
 Do not interpret a local short-epoch smoke run as a performance experiment.
+
+## Full tuning with fixed gamma/dropout
+
+`hybrid_full.py` keeps Cora .052, gamma=.01, dropout=.9, identity condensed
+edges, 2-layer GCN and uniform soft CE fixed. Its default grid is:
+
+- T: .1,.2,.5,1,2,5
+- mu: 0,.1,.2,.5,1,2,5
+- lambda: 0,.0001,.001,.003,.01,.03,.1,.3,1,3,10
+
+Original GRIP is also tuned over exactly the same T/mu grid. Each T/mu pair has
+one GRIP plus 11 hybrid settings, giving 504 settings and 1512 selection fits on
+seeds 0-2. Lambda=0 is the refinement control; mu=0 is the feature/structure-only
+assignment ablation (soft labels still come from the teacher).
+
+Only one teacher is fitted: its logits are cached and temperature-scaled for
+each T. Each T/mu GRIP initialization is shared by that pair's hybrid settings.
+No sequential warm starts across lambda are used. Source/data/config/artifact
+hashes protect resumed runs. This uses a separate output directory from the
+earlier fixed-T/mu experiment and does not import that runner's cache.
+
+Select the best GRIP, best lambda=0 hybrid and best positive-lambda hybrid using
+mean validation only. Ties choose smaller lambda, then T, then mu. Commit those
+choices to selection.json before fresh-seed evaluation. Independently confirm
+these settings on seeds 3-12, plus lambda=0 at the positive winner's exact T/mu
+to isolate the structure effect. Duplicate settings are evaluated only once.
+This costs at most 40 additional fits, total at most 1552. A positive winner is
+confirmed even if its selection validation is worse than a control: it is labeled
+the best *positive* configuration, not the overall winner. Do not reselect using
+fresh test scores. CIs remain pointwise and conditional on fixed data/condensation.
+
+Only selection winners and confirmation tables are printed. All configurations,
+including structural diagnostics, are in summary.csv; individual fits are in
+student_runs.csv and runs/*.json. These are saved incrementally. Full logs go to
+full_*.log. `--confirmation-seeds 0` runs only the full selection sweep.
+
+```python
+import os, subprocess
+subprocess.run(["git", "-C", "/content/GRIP", "pull", "--ff-only"],
+               check=True, stdout=subprocess.DEVNULL)
+os.chdir("/content/GRIP")
+%run hybrid_full.py
+```
