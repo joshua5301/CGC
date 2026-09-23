@@ -1,4 +1,4 @@
-"""Resumable Colab sweep; unchanged two-layer GCN and unweighted model_training.
+"""Resumable Colab sweep; two-layer GCN with uniform or cell-size-weighted student CE.
 
 python -u sweep_distance.py --preset pilot --output /content/drive/MyDrive/grip_distance
 See docs/mpnn_evaluation.md for the default MPNN surrogate evaluation protocol.
@@ -91,7 +91,7 @@ def summarize(output, manifest, repeats, dropouts):
             config = entry['config']
             rows.append(dict(id=entry['id'], dataset=config['dataset'], ratio=config['ratio'],
                              method=config['method'], gamma=config['gamma'], T=config['T'],
-                             coefficient=config['coefficient'], rho=config['rho'], dropout=dropout,
+                             coefficient=config['coefficient'], rho=config['rho'], loss=config['loss'], dropout=dropout,
                              val=100 * np.mean([r['val'] for r in runs]),
                              test=100 * np.mean([r['test'] for r in runs]),
                              test_std=100 * np.std([r['test'] for r in runs], ddof=1) if repeats > 1 else 0.,
@@ -127,6 +127,7 @@ def main():
     parser.add_argument('--rhos', default='0.5', help='mpnn comparison weights; raw always uses rho=0')
     parser.add_argument('--baseline-kl', default='0.1,0.2,0.5,1,2')
     parser.add_argument('--dropouts', default='0.1,0.5,0.9')
+    parser.add_argument('--student-loss', choices=['uniform', 'cell-size'], default='uniform')
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--seed', type=int, default=0, help='fixed condensation/teacher seed; student seeds seed+repeat')
     parser.add_argument('--epoch', type=int, default=1000)
@@ -195,7 +196,7 @@ def main():
                               kernel=kernel, basis=3000, seed=args.seed, m=m,
                               outer_iters=args.outer_iters, median_iters=args.median_iters,
                               batch_size=args.batch_size, epoch=args.epoch, eval_every=args.eval_every,
-                              student='GCN-2-256', lr=.01, weight_decay=5e-4, loss='uniform-soft-CE',
+                              student='GCN-2-256', lr=.01, weight_decay=5e-4, loss='cell-size-soft-CE' if args.student_loss == 'cell-size' else 'uniform-soft-CE',
                               objective=method, comparison_depth=0 if method == 'raw' else 2,
                               comparison_operator='(1-rho)I+rho P_closed' if method in ('mpnn', 'raw') else None,
                               rho=rho,
@@ -263,6 +264,8 @@ def main():
                 if method != 'grip':
                     del result
             count = len(artifact['x'])
+            cell_counts = torch.bincount(artifact['assign'], minlength=count)
+            sample_weight = cell_counts.to(args.device) if args.student_loss == 'cell-size' else None
             ids = torch.arange(count, device=args.device)
             graph = Data(x=artifact['x'].to(args.device), y=artifact['y'].to(args.device),
                          edge_index=torch.stack([ids, ids]), edge_attr=torch.ones(count, device=args.device),
@@ -279,11 +282,11 @@ def main():
                 evaluation_data = served if method == 'distance' else [data, data_val, data_test]
                 print(f'Student {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label} dropout={dropout:g} seed={args.seed+repeat}', flush=True)
                 val, test = model_training(model, train_args, evaluation_data[0], graph,
-                                           evaluation_data[1], evaluation_data[2])
+                                           evaluation_data[1], evaluation_data[2], sample_weight=sample_weight)
                 atomic_json(path, dict(config=config, dropout=dropout, repeat=repeat,
                                        student_seed=args.seed+repeat, val=val, test=test,
                                        condensed_nodes=count, condensation_seconds=artifact['seconds'],
-                                       imbalance_multiplier=float(count * torch.bincount(artifact['assign'], minlength=count).max() / len(artifact['assign']))))
+                                       imbalance_multiplier=float(count * cell_counts.max() / len(artifact['assign']))))
                 del model
                 summarize(output, manifest, args.repeat, dropouts)
             del graph, artifact

@@ -73,7 +73,17 @@ def attach_propagation(data):
     return data
 
 
-def model_training(model, args, data, graph, data_val=None, data_test=None):
+def soft_label_ce(log_probs, targets, sample_weight=None):
+    per_node = -(targets * log_probs).sum(1)
+    if sample_weight is None:
+        return per_node.mean()
+    weights = sample_weight.to(device=per_node.device, dtype=per_node.dtype)
+    if weights.shape != per_node.shape or not torch.isfinite(weights).all() or (weights < 0).any() or weights.sum() <= 0:
+        raise ValueError('sample weights must match training nodes, be finite/nonnegative, and have positive sum')
+    return (weights / weights.sum() * per_node).sum()
+
+
+def model_training(model, args, data, graph, data_val=None, data_test=None, sample_weight=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val_acc = test_acc = 0
     for epoch in range(1, args.epoch+1):
@@ -83,7 +93,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None):
 
         model.train()
         output = model(graph)
-        loss = -(graph.y[graph.train_mask] * output[graph.train_mask]).sum(1).mean()
+        loss = soft_label_ce(output[graph.train_mask], graph.y[graph.train_mask], sample_weight)
 
         optimizer.zero_grad()
         loss.backward()

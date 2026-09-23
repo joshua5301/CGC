@@ -164,3 +164,26 @@ K=0 ablation, matching initialization, nonempty monotone descent, batching,
 CPU/CUDA agreement, and a common sensitivity-bound example for scalar
 SUM/MEAN/MAX/softmax-attention updates with analytically bounded constants.
 Those examples do not establish tight constants for arbitrary trained GNNs.
+
+## Cell-size-weighted GRIP student diagnostic
+
+Set `GRIP_SWEEP_PRESET=weighted` before running `colab_distance.py` for a Cora
+0.052 GRIP-only full sweep. The grid is gamma {0.01, 0.1, 1}, T {0.2, 0.5, 1, 2},
+GRIP KL coefficient {0.1, 0.2, 0.5, 1, 2}, dropout {0.1, 0.5, 0.9}, and student
+seeds {0, 1, 2}: 60 condensations and 540 student fits of 1000 epochs.
+Results go to `MyDrive/GRIP_cora_weighted_ce_full` with compact validation-best
+output and resumable runs.
+
+This explicitly requested diagnostic changes only the student training loss:
+`sum_j (n_j / sum_k n_k) * CE(y_j, student_j)`. Counts come from the final
+condensation assignment after empty-cell removal; they are not class weights.
+The default remains uniform CE, selected by `--student-loss uniform`; the new
+mode is `--student-loss cell-size`. The loss mode is in cache identities and
+summary rows. Two-layer GCN, hidden size 256, optimizer, teacher, condensation,
+and unweighted validation/test accuracy are unchanged.
+
+Compare matching hyperparameters and seeds with the previous uniform full
+sweep, as well as each sweep's validation-selected winner. Separate reruns can
+have GPU numerical variation; a small difference alone does not establish a
+bottleneck. This experiment does not turn the original GRIP bound into a
+general-MPNN guarantee.
