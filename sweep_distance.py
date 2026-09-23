@@ -24,6 +24,7 @@ from src.models import GCN
 from src.partition import partition
 from src.partition_distance import DistanceIdentity
 from src.partition_mpnn import MPNNIdentity
+from src.partition_robust import distance_radii, robust_partition
 from src.teacher import get_kernel_features, fit_logistic
 from src.utils import budget, conv_graph_multi, normalize_adj_sparse, model_training
 
@@ -91,7 +92,7 @@ def summarize(output, manifest, repeats, dropouts):
             config = entry['config']
             rows.append(dict(id=entry['id'], dataset=config['dataset'], ratio=config['ratio'],
                              method=config['method'], gamma=config['gamma'], T=config['T'],
-                             coefficient=config['coefficient'], rho=config['rho'], loss=config['loss'], dropout=dropout,
+                             coefficient=config['coefficient'], rho=config['rho'], loss=config['loss'], radius_cap=config.get('radius_cap'), dropout=dropout,
                              val=100 * np.mean([r['val'] for r in runs]),
                              test=100 * np.mean([r['test'] for r in runs]),
                              test_std=100 * np.std([r['test'] for r in runs], ddof=1) if repeats > 1 else 0.,
@@ -120,13 +121,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preset', choices=['pilot', 'full'], default='pilot')
     parser.add_argument('--cases', default='cora:0.052,citeseer:0.036')
-    parser.add_argument('--methods', default='mpnn,raw,grip', help='mpnn: K=2; raw: K=0; grip: original baseline; distance: legacy GCN-specific objective')
+    parser.add_argument('--methods', default='mpnn,raw,grip', help='mpnn: K=2; raw: K=0; grip: original baseline; robust: worst-label GRIP; distance: legacy GCN-specific objective')
     parser.add_argument('--gammas', default=None)
     parser.add_argument('--temperatures', default=None)
     parser.add_argument('--mus', default='0.1,0.3,1,3,10')
     parser.add_argument('--rhos', default='0.5', help='mpnn comparison weights; raw always uses rho=0')
     parser.add_argument('--baseline-kl', default='0.1,0.2,0.5,1,2')
     parser.add_argument('--dropouts', default='0.1,0.5,0.9')
+    parser.add_argument('--robust-caps', default='0,0.05,0.1,0.2')
+    parser.add_argument('--robust-floor', type=float, default=0.)
+    parser.add_argument('--robust-radius-mode', choices=['distance', 'constant'], default='distance')
+    parser.add_argument('--robust-label-steps', type=int, default=150)
     parser.add_argument('--student-loss', choices=['uniform', 'cell-size'], default='uniform')
     parser.add_argument('--repeat', type=int, default=3)
     parser.add_argument('--seed', type=int, default=0, help='fixed condensation/teacher seed; student seeds seed+repeat')
@@ -150,8 +155,11 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     methods = args.methods.split(',')
-    if not methods or not set(methods) <= {'mpnn', 'raw', 'distance', 'grip'}:
-        raise ValueError('methods must be mpnn, raw, distance and/or grip')
+    if not methods or not set(methods) <= {'mpnn', 'raw', 'distance', 'grip', 'robust'}:
+        raise ValueError('methods must be mpnn, raw, distance, grip and/or robust')
+    caps = list(dict.fromkeys(numbers(args.robust_caps)))
+    if not caps or any(not np.isfinite(c) or not 0 <= args.robust_floor <= c <= 2 for c in caps) or args.robust_label_steps < 1:
+        raise ValueError('Invalid robust radius/label steps')
     dropouts = numbers(args.dropouts)
     rhos = list(dict.fromkeys(numbers(args.rhos)))
     if not rhos or any(not np.isfinite(r) or not 0 <= r <= 1 for r in rhos):
@@ -186,9 +194,9 @@ def main():
         teacher_features = None
         case_entries = []
         for gamma, temp, method in itertools.product(gammas, temperatures, methods):
-            coefficients = numbers(args.baseline_kl if method == 'grip' else args.mus)
+            coefficients = numbers(args.baseline_kl if method in ('grip', 'robust') else args.mus)
             method_rhos = rhos if method == 'mpnn' else ([0.] if method == 'raw' else [None])
-            for coefficient, rho in itertools.product(coefficients, method_rhos):
+            for coefficient, rho, cap in itertools.product(coefficients, method_rhos, caps if method == 'robust' else [None]):
                 if coefficient < 0:
                     raise ValueError('coefficients must be nonnegative')
                 config = dict(source=source, data=fingerprint, dataset=dataset, ratio=ratio,
@@ -199,7 +207,9 @@ def main():
                               student='GCN-2-256', lr=.01, weight_decay=5e-4, loss='cell-size-soft-CE' if args.student_loss == 'cell-size' else 'uniform-soft-CE',
                               objective=method, comparison_depth=0 if method == 'raw' else 2,
                               comparison_operator='(1-rho)I+rho P_closed' if method in ('mpnn', 'raw') else None,
-                              rho=rho,
+                              rho=rho, radius_cap=cap, radius_floor=args.robust_floor if method == 'robust' else None,
+                              radius_mode=args.robust_radius_mode if method == 'robust' else None,
+                              robust_label_steps=args.robust_label_steps if method == 'robust' else None,
                               torch=str(torch.__version__), device=args.device, threads=args.threads)
                 entry = dict(id=digest(config), config=config)
                 case_entries.append(entry)
@@ -210,6 +220,8 @@ def main():
             key, config = entry['id'], entry['config']
             gamma, temp, method, coefficient = (config[k] for k in ['gamma', 'T', 'method', 'coefficient'])
             rho_label = f" rho={config['rho']:g}" if config['rho'] is not None else ''
+            if config['radius_cap'] is not None:
+                rho_label += f" radius_cap={config['radius_cap']:g}"
             paths = [output / 'runs' / f'{key}_d{d:g}_r{r}.json' for d in dropouts for r in range(args.repeat)]
             if all(p.exists() for p in paths):
                 print(f'SKIP completed {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label}', flush=True)
@@ -238,7 +250,15 @@ def main():
                 print(f'Condense {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label}', flush=True)
                 start = time.perf_counter()
                 diagnostics = {}
-                if method in ('mpnn', 'raw'):
+                if method == 'robust':
+                    epsilon, radius_info = distance_radii(h2, data.train_mask, cap=config['radius_cap'],
+                                                        floor=config['radius_floor'], mode=config['radius_mode'])
+                    result = robust_partition(h2, f, m, epsilon, coefficient=coefficient,
+                                              outer_iters=args.outer_iters, label_steps=args.robust_label_steps,
+                                              batch_size=args.batch_size)
+                    xc, yc, assignment = result['H_cond'], result['Y_cond'], result['assign']
+                    history, diagnostics = result['history'], {**result['diagnostics'], **radius_info}
+                elif method in ('mpnn', 'raw'):
                     result = MPNNIdentity(h0, data.edge_index, f, m, mu=coefficient, seed=args.seed,
                                           depth=2 if method == 'mpnn' else 0, rho=config['rho'],
                                           batch_size=args.batch_size, median_iters=args.median_iters).run(args.outer_iters)
@@ -259,6 +279,8 @@ def main():
                                 seconds=time.perf_counter()-start,
                                 teacher_val=float((f.argmax(1)[data.val_mask] == data.y[data.val_mask]).float().mean())
                                 if getattr(data, 'val_mask', None) is not None else None)
+                if method == 'robust':
+                    artifact['uncertainty_radius'] = epsilon.cpu()
                 atomic_torch(condensed_path, artifact)
                 del f, logits, xc, yc, assignment
                 if method != 'grip':

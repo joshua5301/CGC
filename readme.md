@@ -13,3 +13,9 @@ uniform student loss. The default objective is `((I+P_closed)/2)^2 D + mu KL`,
 independent of the evaluation GCN's normalization matrix. The older GCN-specific
 `distance` objective remains available only as an explicit legacy option.
 
+
+### Robust teacher-label compression (experimental)
+
+See [the objective, assumptions, and Colab preset](docs/robust_labels.md) for
+exact L1-ball worst-label costs. Distance-based radii are not certified; the
+student remains the original two-layer GCN with uniform CE.
