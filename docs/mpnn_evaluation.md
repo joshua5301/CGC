@@ -93,6 +93,13 @@ assignments, each student run, logs, summary.csv, and validation-selected
 best.json are saved. Rerunning the same command resumes missing student runs;
 changing repeat from 1 to 3 reuses the condensation and already finished seed.
 
+The Colab cell displays a single updating progress item and one compact final
+table (all validation-best ties, ignoring numerical noise at 10 decimal places).
+Epoch/objective logs remain in the Drive log file; only the last 20 lines are
+printed on failure. `best.json` retains the runner's existing single-winner
+selection, while the compact table exposes ties without selecting by test score.
+This display-only change does not invalidate the training/condensation caches.
+
 Numerical defaults: representative batch 32, median iterations 30, outer
 iterations 20, objective relative tolerance 1e-6. These are computational
 controls, not accuracy grid dimensions. The full teacher/features/GCN still
