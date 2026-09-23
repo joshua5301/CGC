@@ -94,6 +94,28 @@ That is 4 condensations and 12 student fits; student remains the same two-layer
 GCN with uniform soft-label CE. Cap zero is the paired-initialization baseline.
 This small diagnostic is not a full hyperparameter sweep.
 
+### Extended radius grid and fresh seeds
+
+Run `extend_robust.py` after pulling the repository to expand caps to
+{0, .001, .003, .005, .01, .02, .03, .1}, with total seeds 0 through 12.
+The existing output directory is reused. The wrapper does not change the
+source fingerprint used by `sweep_distance.py`: compatible saved teachers,
+condensations, and seed results remain reusable. For the completed initial
+experiment this means 4 new condensations and 92 additional student fits
+(104 total). Different source/environment/training settings invalidate reuse
+through the existing cache keys.
+
+The compact report separates original seeds 0-2 from fresh seeds 3-12. It shows
+the fresh-seed paired test difference against cap zero and a pointwise 95%
+Student-t confidence interval. The previously selected .01 cap is identified
+explicitly. The expanded-grid candidate is selected only using seeds 0-2
+validation; fresh test performance is never used for selection. Ties use the
+first/smaller cap in grid order. `confirmation.json` additionally contains
+Bonferroni-adjusted intervals for all seven nonzero comparisons. These are
+seed-level approximate intervals on fixed condensations and one fixed split,
+not guarantees across datasets or data splits. Grid expansion is adaptive;
+it does not establish improvement simply by producing a higher maximum.
+
 Output: `MyDrive/GRIP_cora_robust_labels`, with full logs, resumable artifacts,
 objective histories, radius quantiles, solver-gap diagnostics and summary.csv.
 The Colab display reports results separately for each cap, using validation
