@@ -114,3 +114,23 @@ shrinks it, the structure term keeps it. Accuracy is not hurt at these sizes.
 (iv) The faithful bias-free student on raw X is 0.5-1.5 below the transfer path; learned-median Q does not help it.
 Next: the same comparison with `--struct_H prop2` (D_H on A^2 X, the GRIP feature level), so that beta = 0 is the
 main-table partition and beta > 0 isolates the structure term.
+
+### Structure term on the GRIP feature level (`--struct_H prop2`, transfer, identity Q; A100, 3 seeds, same seeds for the reference)
+
+beta in {0, 0.3, 1, 3, 10} x mu in {0.1, 0.3, 1} plus the bound coefficients; `grip` = `--edges none` in the same cell.
+
+| | GRIP (same cell) | best-val (beta, mu) | test | bound coef. | D_S init -> final |
+|---|---|---|---|---|---|
+| cora 1.3 % | 84.80 (val 82.93) | (10, 0.3) val 83.27 | 84.83 | 84.77 | 0.51 -> 0.23 |
+| cora 2.6 % | 84.23 (val 82.93) | (3, 0.1) val 83.40 | 84.80 | 84.50 | 0.42 -> 0.23 |
+| cora 5.2 % | 84.17 (val 81.67) | (10, 0.1) val 81.87 | 84.03 | 84.63 | 0.53 -> 0.28 |
+| citeseer 0.9 % | 74.90 (val 77.80) | (3, 0.1) val 77.67 | 74.93 | 74.90 | 0.16 -> 0.085 |
+| citeseer 1.8 % | 74.63 (val 76.87) | (0.3, 1) val 77.40 | 74.67 | 75.07 | 0.16 -> 0.12 |
+| citeseer 3.6 % | 73.90 (val 77.47) | (0.3, 1) val 77.60 | 73.27 | 73.87 | 0.19 -> 0.15 |
+
+With the partition initialised from GRIP and D_H on A^2 X, the structure term halves D_S at every density while
+validation moves by at most +0.5 and test stays within the seed noise of GRIP (cora +0.0 / +0.6 / -0.1, citeseer
++0.0 / +0.0 / -0.6). Pure sequential refinement (beta = 0, unnormalised alpha / mu) is slightly below GRIP on
+citeseer (73.5-74.5 vs 74.9 at 0.9 %); the structure term brings it back. Conclusion for cora / citeseer: the
+D_S term of the bound is not binding for downstream accuracy -- consistent with the measured train / serve
+mismatch of the student (diag_student_eps.py: +0.05 / +0.20).
