@@ -47,6 +47,8 @@ recomputation. The loop stops on a small full-objective improvement, not on "no 
 
 ## Students in `main.py`
 
+- `--struct_student gcn` (default): the condensed graph of the objective -- raw-X medians `Hc` and `Q` used as given
+  (GCN without renormalisation) -- trained by the main-table GCN and served on `(X, A_hat)` exactly as the main table.
 - `--struct_student faithful` (bound applies): condensed graph `(Hc, Q, Yc)`, student `PropGNN` (bias-free, mean
   aggregation with the given matrix, no self-loops, no renormalisation), served on `(X, P)` via `attach_transition`.
 - `--struct_student transfer` (empirical): only the learned partition is used -- representatives are the geometric
@@ -134,3 +136,14 @@ validation moves by at most +0.5 and test stays within the seed noise of GRIP (c
 citeseer (73.5-74.5 vs 74.9 at 0.9 %); the structure term brings it back. Conclusion for cora / citeseer: the
 D_S term of the bound is not binding for downstream accuracy -- consistent with the measured train / serve
 mismatch of the student (diag_student_eps.py: +0.05 / +0.20).
+
+### Raw-X representatives with the main-table GCN (`--struct_student gcn`), cora 5.2 %, local, 3 seeds
+
+| | edges | test | val |
+|---|---|---|---|
+| identity, beta 0 | 140 | 83.93 +- 0.68 | 82.47 |
+| identity, beta 3 | 140 | 83.87 +- 0.32 | 82.53 |
+| learned_median, beta 3 | 1228 | 83.53 +- 0.75 | 81.80 |
+
+The raw-X representatives with an isolated condensed graph train a GCN to 84 as well (val 82.5 vs 81.7 for the
+A^2 X representatives at this density), in line with the near-zero train / serve mismatch of the student.

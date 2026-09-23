@@ -62,7 +62,7 @@ elif args.edges.startswith('structure'):
     # structure-aware partition from the message-passing risk bound: J = (alpha D_H + beta D_S + mu D_KL) / N on the
     # raw features H0 and the row-stochastic P; the GRIP partition (on A^2 X) is the initial assignment, the teacher is unchanged
     P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
-    assert not (args.struct_H == 'prop2' and args.struct_student == 'faithful'), 'prop2 features are outside the bound: use --struct_student transfer'
+    assert not (args.struct_H == 'prop2' and args.struct_student != 'transfer'), 'prop2 features only with --struct_student transfer'
     H_struct = H0 if args.struct_H == 'raw' else X
     if args.struct_coef == 'bound':
         R = float(H_struct.norm(dim=1).max())
@@ -76,13 +76,15 @@ elif args.edges.startswith('structure'):
                           'identity' if args.edges == 'structure_identity' else 'learned_median', args.outer_iters, args.seed)
     assign = torch.from_numpy(out['assign']).to(X.device)
     y_cond = torch.from_numpy(out['Y_cond']).to(args.device)
-    if args.struct_student == 'faithful':
+    if args.struct_student in ('gcn', 'faithful'):
+        # the condensed graph of the objective: raw-X medians and Q, used as given (GCN without renormalisation)
         X_cond = torch.from_numpy(out['H_cond']).to(args.device)
         ei, ea = transition_to_edges(out['Q'])
         edge_index, edge_attr = torch.from_numpy(ei).long().to(args.device), torch.from_numpy(ea).float().to(args.device)
-        data = attach_transition(data)
+        attach = attach_transition if args.struct_student == 'faithful' else attach_propagation   # served on P, or on A_hat as the main table
+        data = attach(data)
         if data_val is not None:
-            data_val, data_test = attach_transition(data_val), attach_transition(data_test)
+            data_val, data_test = attach(data_val), attach(data_test)
     else:
         X_cond = geometric_medians(X.double(), assign, all_node_num)
         edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(args.device), torch.ones(all_node_num, device=args.device)
@@ -108,7 +110,7 @@ for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     for repeat in range(args.repeat):
         model = (SAGE(data.num_features, args.n_dim, args.num_class, 2, dropout) if args.edges == 'ot_1hop' else
                  PropGNN(data.num_features, args.n_dim, args.num_class, 2, dropout) if faithful else
-                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges in ('none', 'structure_identity', 'structure_median'))).to(args.device)
+                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none' or (args.edges.startswith('structure') and args.struct_student == 'transfer'))).to(args.device)
         runs.append(model_training(model, args, data, graph, data_val, data_test))
     val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
     results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)
