@@ -26,12 +26,9 @@ def get_hyperparams():
     parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
     parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
     parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
-    parser.add_argument('--struct_student', type=str, default='gcn', choices=['gcn', 'faithful', 'transfer'],
-                        help='structure_*: gcn = condensed graph (Hc on raw X, Q) trained by the main-table GCN and served on (X, A_hat); '
-                             'faithful = bias-free mean-aggregation student on (Hc, Q) served on (X, P) [the bound applies]; '
-                             'transfer = the learned partition only, representatives on A^2 X, A\' = I, GCN as in the main table [empirical]')
-    parser.add_argument('--struct_H', type=str, default='raw', choices=['raw', 'prop2'],
-                        help='structure_*: features in D_H -- raw X (the faithful student input) or A^2 X (GRIP feature level; transfer student only)')
+    parser.add_argument('--struct_student', type=str, default='gcn', choices=['gcn', 'faithful'],
+                        help='structure_*: the condensed graph is the objective\'s own (raw-X medians, Q as given); gcn = main-table GCN served on (X, A_hat), '
+                             'faithful = bias-free mean-aggregation student served on (X, P) [the bound applies]')
     parser.add_argument('--struct_coef', type=str, default='surrogate', choices=['surrogate', 'bound'],
                         help='structure_*: surrogate = alpha/beta/mu from --root_weight/--neighbor_weight/--label_weight; '
                              'bound = alpha, beta from the explicit constants (c_P, K=2, --struct_abar, R = max ||x||, m), mu = 1')

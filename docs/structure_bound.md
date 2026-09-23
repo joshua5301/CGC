@@ -47,13 +47,12 @@ recomputation. The loop stops on a small full-objective improvement, not on "no 
 
 ## Students in `main.py`
 
-- `--struct_student gcn` (default): the condensed graph of the objective -- raw-X medians `Hc` and `Q` used as given
-  (GCN without renormalisation) -- trained by the main-table GCN and served on `(X, A_hat)` exactly as the main table.
-- `--struct_student faithful` (bound applies): condensed graph `(Hc, Q, Yc)`, student `PropGNN` (bias-free, mean
-  aggregation with the given matrix, no self-loops, no renormalisation), served on `(X, P)` via `attach_transition`.
-- `--struct_student transfer` (empirical): only the learned partition is used -- representatives are the geometric
-  medians of `A^2 X` over the new cells, `A' = I`, GCN as in the main table. Same evaluation as GRIP; the bound does not
-  cover it.
+The condensed graph is always the objective's own: raw-X medians `Hc`, soft labels `Yc`, and `Q` used as given.
+- `--struct_student gcn` (default): the main-table GCN (no renormalisation of the condensed graph), served on `(X, A_hat)`
+  exactly as the main table.
+- `--struct_student faithful`: bias-free mean-aggregation `PropGNN`, served on `(X, P)`; the student class of the bound.
+Propagated-feature variants (representatives on `A^2 X`) were tried and removed: they defeat the purpose of the line
+(the bound's `E_0` is on the student's input), even though they score at the main-table level.
 
 ## Checks (`python -m pytest tests/test_partition_struct.py -q`)
 
