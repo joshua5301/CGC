@@ -8,7 +8,7 @@ from src.partition import partition, geometric_medians
 from src.edges import coarsen, to_graph
 from src.partition_ot import build_transition, transition_to_edges, partition_ot_1hop
 from src.partition_ot_entropic import partition_ot_1hop_entropic
-from src.partition_struct import structure_bound, bound_coefficients, column_sum_max
+from src.partition_struct import structure_bound, bound_coefficients, column_sum_max, kmeans_nonempty
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -31,8 +31,11 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
-all_node_num = len(X_cond)
+if args.edges.startswith('structure') and args.struct_init == 'kmeans':
+    assign, all_node_num = torch.from_numpy(kmeans_nonempty(H0.cpu().numpy(), budget_node_num, args.seed)).to(X.device), budget_node_num
+else:
+    X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
+    all_node_num = len(X_cond)
 if args.edges == 'none':
     edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(X_cond.device), torch.ones(all_node_num, device=X_cond.device)
 elif args.edges == 'ot_1hop':
@@ -60,7 +63,7 @@ elif args.edges == 'ot_1hop':
         data_val, data_test = attach_transition(data_val, prop), attach_transition(data_test, prop)
 elif args.edges.startswith('structure'):
     # structure-aware partition from the message-passing risk bound: J = (alpha D_H + beta D_S + mu D_KL) / N on the
-    # raw features H0 and the row-stochastic P; the GRIP partition (on A^2 X) is the initial assignment, the teacher is unchanged
+    # raw features H0 and the row-stochastic P; initial assignment = k-means on raw X (or the GRIP partition), teacher unchanged
     P, meta = build_transition(data.edge_index.cpu().numpy(), len(H0))
     if args.struct_coef == 'bound':
         R = float(H0.norm(dim=1).max())
@@ -69,7 +72,7 @@ elif args.edges.startswith('structure'):
         print(f'transition: {meta}  bound coefficients: K 2, abar {args.struct_abar:g}, R {R:.3f} -> alpha {alpha:.4g} beta {beta:.4g} mu 1')
     else:
         alpha, beta, mu = args.root_weight, args.neighbor_weight, args.label_weight
-        print(f'transition: {meta}  surrogate coefficients alpha {alpha:g} beta {beta:g} mu {mu:g}')
+        print(f'transition: {meta}  init {args.struct_init}  surrogate coefficients alpha {alpha:g} beta {beta:g} mu {mu:g}')
     out = structure_bound(H0.cpu().numpy(), P, y_pred.cpu().numpy(), all_node_num, assign.cpu().numpy(), alpha, beta, mu,
                           'identity' if args.edges == 'structure_identity' else 'learned_median', args.outer_iters, args.seed)
     assign = torch.from_numpy(out['assign']).to(X.device)

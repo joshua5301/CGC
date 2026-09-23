@@ -54,6 +54,26 @@ def bound_coefficients(cP, K, abar, R, m):
     return np.sqrt(2) * A, np.sqrt(2) * Bc
 
 
+# ----------------------------------------------------------------------------- initial partition
+def kmeans_nonempty(X, m, seed=0):
+    """Deterministic k-means on the rows of X (faiss, fixed seed) with every empty cell filled by the node of the
+    largest cell that is farthest from that cell's mean (one node per empty cell).  Returns assign [N]."""
+    import faiss
+    X_np = np.ascontiguousarray(np.asarray(X, dtype=np.float32))
+    km = faiss.Kmeans(X_np.shape[1], m, seed=seed, gpu=False)
+    km.cp.min_points_per_centroid = 1
+    km.train(X_np)
+    a = km.index.search(X_np, 1)[1].ravel().astype(np.int64)
+    counts = np.bincount(a, minlength=m)
+    for j in np.flatnonzero(counts == 0):
+        big = int(np.argmax(counts))
+        idx = np.flatnonzero(a == big)
+        far = idx[np.argmax(np.linalg.norm(X_np[idx] - X_np[idx].mean(0), axis=1))]
+        a[far] = j
+        counts[big] -= 1; counts[j] += 1
+    return a
+
+
 # ----------------------------------------------------------------------------- geometric medians per cell
 def geometric_median(X, z0, iters=MEDIAN_ITERS):
     """Unweighted geometric median of the rows of X (Weiszfeld with the Vardi-Zhang step at coincident points);

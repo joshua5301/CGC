@@ -33,7 +33,9 @@ ablation, not a bound-preserving variant.
 `J = (alpha D_H + beta D_S + mu D_KL) / N`, no per-term normalisation (`--struct_coef surrogate`: alpha / beta / mu from
 `--root_weight / --neighbor_weight / --label_weight`; `--struct_coef bound`: alpha, beta from the explicit constants with
 `K = 2`, `--struct_abar`, mu = 1). Teacher `F` = the existing kernel teacher on `A^2 X` (training labels only), smoothed
-once by 1e-12 and fixed; structural features `H` = raw `X` (the faithful student's input); initial partition = GRIP's.
+once by 1e-12 and fixed; structural features `H` = raw `X` (the faithful student's input). Initial partition
+(`--struct_init`): deterministic k-means on raw `X` with empty cells filled (default -- the GRIP partition, its `A^2 X`
+features and `kl_weight` are then not used at all), or the GRIP partition.
 
 | block | update | exactness |
 |---|---|---|

@@ -29,6 +29,8 @@ def get_hyperparams():
     parser.add_argument('--struct_student', type=str, default='gcn', choices=['gcn', 'faithful'],
                         help='structure_*: the condensed graph is the objective\'s own (raw-X medians, Q as given); gcn = main-table GCN served on (X, A_hat), '
                              'faithful = bias-free mean-aggregation student served on (X, P) [the bound applies]')
+    parser.add_argument('--struct_init', type=str, default='kmeans', choices=['kmeans', 'grip'],
+                        help='structure_*: initial partition -- k-means on raw X (default; the GRIP partition and kl_weight are not used) or the GRIP partition on A^2 X')
     parser.add_argument('--struct_coef', type=str, default='surrogate', choices=['surrogate', 'bound'],
                         help='structure_*: surrogate = alpha/beta/mu from --root_weight/--neighbor_weight/--label_weight; '
                              'bound = alpha, beta from the explicit constants (c_P, K=2, --struct_abar, R = max ||x||, m), mu = 1')
