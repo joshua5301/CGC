@@ -10,6 +10,7 @@ from src.partition_ot import build_transition, transition_to_edges, partition_ot
 from src.partition_ot_entropic import partition_ot_1hop_entropic
 from src.partition_struct import structure_bound, bound_coefficients, column_sum_max, kmeans_nonempty
 from src.partition_distance import DistanceIdentity
+from src.partition_mpnn import MPNNIdentity
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -32,14 +33,22 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-if args.edges == 'distance_identity':
+if args.edges in ('distance_identity', 'mpnn_identity'):
     all_node_num = budget_node_num
 elif args.edges.startswith('structure') and args.struct_init == 'kmeans':
     assign, all_node_num = torch.from_numpy(kmeans_nonempty(H0.cpu().numpy(), budget_node_num, args.seed)).to(X.device), budget_node_num
 else:
     X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
     all_node_num = len(X_cond)
-if args.edges == 'distance_identity':
+if args.edges == 'mpnn_identity':
+    out = MPNNIdentity(H0, data.edge_index, y_pred, all_node_num,
+                       mu=args.label_weight, seed=args.seed, depth=args.mpnn_depth,
+                       batch_size=args.distance_batch_size,
+                       median_iters=args.distance_median_iters).run(args.outer_iters)
+    X_cond, y_cond, assign = out['H_cond'], out['Y_cond'], out['assign']
+    ids = torch.arange(all_node_num, device=X_cond.device)
+    edge_index, edge_attr = torch.stack([ids, ids]), torch.ones(all_node_num, device=X_cond.device)
+elif args.edges == 'distance_identity':
     out = DistanceIdentity(H0, normalize_adj_sparse(data), y_pred, all_node_num,
                            mu=args.label_weight, seed=args.seed,
                            batch_size=args.distance_batch_size,
@@ -121,7 +130,7 @@ for dropout in [float(v) for v in str(args.dropouts).split(',')]:
     for repeat in range(args.repeat):
         model = (SAGE(data.num_features, args.n_dim, args.num_class, 2, dropout) if args.edges == 'ot_1hop' else
                  PropGNN(data.num_features, args.n_dim, args.num_class, 2, dropout) if faithful else
-                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges == 'none')).to(args.device)
+                 GCN(data.num_features, args.n_dim, args.num_class, 2, dropout, normalize=args.edges in ('none', 'mpnn_identity'))).to(args.device)
         runs.append(model_training(model, args, data, graph, data_val, data_test))
     val, test = np.mean([v for v, _ in runs]), [t for _, t in runs]
     results[dropout] = (val, np.mean(test), np.std(test, ddof=1) if len(test) > 1 else 0.0)

@@ -13,13 +13,13 @@ print('GPU:', torch.cuda.get_device_name(0))
 assert Path('/content/drive/MyDrive').is_dir(), '먼저 Google Drive를 mount 하세요.'
 
 PRESET = os.environ.get('GRIP_SWEEP_PRESET', 'pilot')  # 'full': gamma x T x coefficient 공동 탐색
-OUTPUT = '/content/drive/MyDrive/GRIP_distance_identity'
+OUTPUT = '/content/drive/MyDrive/GRIP_mpnn_identity'
 CASES = 'cora:0.052,citeseer:0.036'
 Path(OUTPUT).mkdir(parents=True, exist_ok=True)
 command = [
     sys.executable, '-u', 'sweep_distance.py',
     '--preset', PRESET, '--cases', CASES,
-    '--methods', 'distance,grip',
+    '--methods', 'mpnn,raw,grip',
     '--mus', '0.1,0.3,1,3,10', '--baseline-kl', '0.1,0.2,0.5,1,2',
     '--dropouts', '0.1,0.5,0.9', '--repeat', '3',
     '--epoch', '1000', '--eval-every', '10',

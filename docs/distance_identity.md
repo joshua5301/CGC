@@ -1,5 +1,9 @@
 # Distance propagation with Q = I, two-layer GCN
 
+**Legacy GCN-specific experiment.** The default Colab cell now runs the
+[MPNN surrogate protocol](mpnn_evaluation.md). To reproduce this earlier
+experiment explicitly pass `--methods distance,grip` to `sweep_distance.py`.
+
 The student is the existing **two-layer GCN**, hidden width 256, ReLU, bias,
 dropout, and **uniform mean soft-label cross entropy** in `model_training`.
 No cell-size weighting, architecture change, norm constraint, or extra training

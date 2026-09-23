@@ -1,7 +1,7 @@
 """Resumable Colab sweep; unchanged two-layer GCN and unweighted model_training.
 
 python -u sweep_distance.py --preset pilot --output /content/drive/MyDrive/grip_distance
-See docs/distance_identity.md for protocol, bound qualifications and full grid.
+See docs/mpnn_evaluation.md for the default MPNN surrogate evaluation protocol.
 """
 import argparse
 import csv
@@ -23,6 +23,7 @@ from src.hyperparams import BEST_HYPERPARAMS_DICT
 from src.models import GCN
 from src.partition import partition
 from src.partition_distance import DistanceIdentity
+from src.partition_mpnn import MPNNIdentity
 from src.teacher import get_kernel_features, fit_logistic
 from src.utils import budget, conv_graph_multi, normalize_adj_sparse, model_training
 
@@ -94,6 +95,7 @@ def summarize(output, manifest, repeats, dropouts):
                              val=100 * np.mean([r['val'] for r in runs]),
                              test=100 * np.mean([r['test'] for r in runs]),
                              test_std=100 * np.std([r['test'] for r in runs], ddof=1) if repeats > 1 else 0.,
+                             imbalance_multiplier=runs[0]['imbalance_multiplier'],
                              repeats=repeats))
     rows.sort(key=lambda r: (r['dataset'], r['ratio'], r['method'], -r['val']))
     if rows:
@@ -114,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preset', choices=['pilot', 'full'], default='pilot')
     parser.add_argument('--cases', default='cora:0.052,citeseer:0.036')
-    parser.add_argument('--methods', default='distance,grip')
+    parser.add_argument('--methods', default='mpnn,raw,grip', help='mpnn: K=2; raw: K=0; grip: original baseline; distance: legacy GCN-specific objective')
     parser.add_argument('--gammas', default=None)
     parser.add_argument('--temperatures', default=None)
     parser.add_argument('--mus', default='0.1,0.3,1,3,10')
@@ -128,7 +130,7 @@ def main():
     parser.add_argument('--median-iters', type=int, default=30)
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--raw-data-dir', default='/content/data/')
-    parser.add_argument('--output', default='results/distance_identity')
+    parser.add_argument('--output', default='results/mpnn_identity')
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--threads', type=int, default=4)
     args = parser.parse_args()
@@ -142,8 +144,8 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     methods = args.methods.split(',')
-    if not set(methods) <= {'distance', 'grip'}:
-        raise ValueError('methods must be distance and/or grip')
+    if not methods or not set(methods) <= {'mpnn', 'raw', 'distance', 'grip'}:
+        raise ValueError('methods must be mpnn, raw, distance and/or grip')
     dropouts = numbers(args.dropouts)
     if not dropouts or any(not 0 <= d < 1 for d in dropouts):
         raise ValueError('dropouts must lie in [0,1)')
@@ -169,13 +171,13 @@ def main():
         train_args, data, data_val, data_test = set_dataset(train_args, get_dataset(train_args))
         fingerprint = digest([data_digest(d) for d in [data, data_val, data_test] if d is not None])
         h0, _, h2 = conv_graph_multi(train_args, data)
-        operator = normalize_adj_sparse(data).coalesce()
-        served = [normalized_copy(d) for d in [data, data_val, data_test]]
+        operator = normalize_adj_sparse(data).coalesce() if 'distance' in methods else None
+        served = [normalized_copy(d) for d in [data, data_val, data_test]] if 'distance' in methods else None
         m = budget(train_args)
         teacher_features = None
         case_entries = []
         for gamma, temp, method in itertools.product(gammas, temperatures, methods):
-            coefficients = numbers(args.mus if method == 'distance' else args.baseline_kl)
+            coefficients = numbers(args.baseline_kl if method == 'grip' else args.mus)
             for coefficient in coefficients:
                 if coefficient < 0:
                     raise ValueError('coefficients must be nonnegative')
@@ -185,6 +187,9 @@ def main():
                               outer_iters=args.outer_iters, median_iters=args.median_iters,
                               batch_size=args.batch_size, epoch=args.epoch, eval_every=args.eval_every,
                               student='GCN-2-256', lr=.01, weight_decay=5e-4, loss='uniform-soft-CE',
+                              objective=method, comparison_depth=0 if method == 'raw' else 2,
+                              comparison_operator='(I+P_closed)/2' if method in ('mpnn', 'raw') else None,
+                              rho=0.5 if method in ('mpnn', 'raw') else None,
                               torch=str(torch.__version__), device=args.device, threads=args.threads)
                 entry = dict(id=digest(config), config=config)
                 case_entries.append(entry)
@@ -221,7 +226,14 @@ def main():
                 seed_everything(args.seed)
                 print(f'Condense {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}', flush=True)
                 start = time.perf_counter()
-                if method == 'distance':
+                diagnostics = {}
+                if method in ('mpnn', 'raw'):
+                    result = MPNNIdentity(h0, data.edge_index, f, m, mu=coefficient, seed=args.seed,
+                                          depth=2 if method == 'mpnn' else 0,
+                                          batch_size=args.batch_size, median_iters=args.median_iters).run(args.outer_iters)
+                    xc, yc, assignment = result['H_cond'], result['Y_cond'], result['assign']
+                    history, diagnostics = result['history'], result['diagnostics']
+                elif method == 'distance':
                     result = DistanceIdentity(h0, operator, f, m, mu=coefficient, seed=args.seed,
                                               batch_size=args.batch_size, median_iters=args.median_iters).run(args.outer_iters)
                     xc, yc, assignment = result['H_cond'], result['Y_cond'], result['assign']
@@ -232,12 +244,13 @@ def main():
                 if args.device.startswith('cuda'):
                     torch.cuda.synchronize()
                 artifact = dict(x=xc.float().cpu(), y=yc.float().cpu(), assign=assignment.cpu(),
-                                config=config, history=history, seconds=time.perf_counter()-start,
+                                config=config, history=history, diagnostics=diagnostics,
+                                seconds=time.perf_counter()-start,
                                 teacher_val=float((f.argmax(1)[data.val_mask] == data.y[data.val_mask]).float().mean())
                                 if getattr(data, 'val_mask', None) is not None else None)
                 atomic_torch(condensed_path, artifact)
                 del f, logits, xc, yc, assignment
-                if method == 'distance':
+                if method != 'grip':
                     del result
             count = len(artifact['x'])
             ids = torch.arange(count, device=args.device)
@@ -249,16 +262,18 @@ def main():
                 if path.exists():
                     continue
                 seed_everything(args.seed + repeat)
-                # Keep original GRIP's normalize=True route; distance uses the exact precomputed operator.
+                # mpnn/raw/grip use IDENTICAL GCN construction and original evaluation graphs.
+                # Only the legacy GCN-specific distance method uses precomputed normalization.
                 model = GCN(data.num_features, 256, train_args.num_class, 2, dropout,
-                            normalize=method == 'grip').to(args.device)
-                evaluation_data = [data, data_val, data_test] if method == 'grip' else served
+                            normalize=method != 'distance').to(args.device)
+                evaluation_data = served if method == 'distance' else [data, data_val, data_test]
                 print(f'Student {method} gamma={gamma:g} T={temp:g} coef={coefficient:g} dropout={dropout:g} seed={args.seed+repeat}', flush=True)
                 val, test = model_training(model, train_args, evaluation_data[0], graph,
                                            evaluation_data[1], evaluation_data[2])
                 atomic_json(path, dict(config=config, dropout=dropout, repeat=repeat,
                                        student_seed=args.seed+repeat, val=val, test=test,
-                                       condensed_nodes=count, condensation_seconds=artifact['seconds']))
+                                       condensed_nodes=count, condensation_seconds=artifact['seconds'],
+                                       imbalance_multiplier=float(count * torch.bincount(artifact['assign'], minlength=count).max() / len(artifact['assign']))))
                 del model
                 summarize(output, manifest, args.repeat, dropouts)
             del graph, artifact
