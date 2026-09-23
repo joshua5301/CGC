@@ -1,4 +1,4 @@
-"""Paired Cora comparison: GRIP identity, fixed coarse means, optimized coarse features."""
+"""Paired comparison: GRIP identity, fixed coarse means, optimized coarse features."""
 import argparse
 import copy
 import csv
@@ -22,7 +22,7 @@ from src.dataloader import get_dataset, set_dataset
 from src.models import GCN
 from src.partition import partition
 from src.teacher import get_kernel_features, fit_logistic
-from src.utils import budget, conv_graph_multi, soft_label_ce
+from src.utils import BUDGET, budget, conv_graph_multi, soft_label_ce
 from src.coarsening_features import fixed_coarsening, optimize_features, feature_diagnostics, gcn_operator
 
 
@@ -95,12 +95,14 @@ def measure(model, data, graph, assignment, teacher, labels, P, Q):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--output', default='/content/drive/MyDrive/GRIP_cora_coarsening_features')
+    p.add_argument('--dataset', choices=('cora', 'citeseer'), default='cora')
+    p.add_argument('--ratio', type=float, default=None)
+    p.add_argument('--output', default=None)
     p.add_argument('--raw-data-dir', default='/content/data/')
     # Most recent full-sweep GRIP winner by selection validation, not by test.
     p.add_argument('--gamma', type=float, default=.01)
-    p.add_argument('--temperature', type=float, default=5.)
-    p.add_argument('--coefficient', type=float, default=2.)
+    p.add_argument('--temperature', type=float, default=None)
+    p.add_argument('--coefficient', type=float, default=None)
     p.add_argument('--dropout', type=float, default=.9)
     p.add_argument('--repeat', type=int, default=10)
     p.add_argument('--seed-start', type=int, default=3)
@@ -111,9 +113,23 @@ def main():
     p.add_argument('--smooth-relative', type=float, default=1e-4)
     p.add_argument('--device', default='cuda')
     args = p.parse_args()
-    if (not np.isfinite([args.gamma, args.temperature, args.coefficient, args.dropout,
+    # Citeseer teacher/partition settings use the first reported validation tie;
+    # dropout stays .9 to retain the current coarsening comparison protocol.
+    defaults = dict(cora=(.052, 5., 2., 'relu'), citeseer=(.036, .2, .1, 'erf'))
+    ratio, temperature, coefficient, kernel = defaults[args.dataset]
+    if args.ratio is None:
+        args.ratio = ratio
+    if args.temperature is None:
+        args.temperature = temperature
+    if args.coefficient is None:
+        args.coefficient = coefficient
+    if args.output is None:
+        args.output = f'/content/drive/MyDrive/GRIP_{args.dataset}_coarsening_features'
+    if (args.dataset, args.ratio) not in BUDGET:
+        p.error(f'Unsupported ratio for {args.dataset}: {args.ratio}')
+    if (not np.isfinite([args.ratio, args.gamma, args.temperature, args.coefficient, args.dropout,
                         args.feature_tolerance, args.smooth_relative]).all()
-            or args.gamma <= 0 or args.temperature <= 0 or args.coefficient < 0
+            or not 0 < args.ratio <= 1 or args.gamma <= 0 or args.temperature <= 0 or args.coefficient < 0
             or not 0 <= args.dropout < 1 or args.repeat < 2 or args.seed_start < 0
             or not 1 <= args.eval_every <= args.epoch or args.feature_steps < 1
             or min(args.feature_tolerance, args.smooth_relative) <= 0):
@@ -130,7 +146,7 @@ def main():
     logfile = out/f'coarsening_{datetime.now():%Y%m%d_%H%M%S}.log'
     print('GPU:', torch.cuda.get_device_name(0) if args.device.startswith('cuda') else 'CPU')
     print(f'Results: {out}\nLog: {logfile}')
-    print(f'Fixed Cora .052: gamma={args.gamma:g}, T={args.temperature:g}, mu={args.coefficient:g}, dropout={args.dropout:g}')
+    print(f'Fixed {args.dataset} {args.ratio:g}: gamma={args.gamma:g}, T={args.temperature:g}, mu={args.coefficient:g}, dropout={args.dropout:g}')
     try:
         from IPython import get_ipython
         from IPython.display import display
@@ -142,7 +158,7 @@ def main():
             handle.update(message)
         else:
             print('\r'+message.ljust(115), end='', flush=True)
-    train = SimpleNamespace(dataset_name='cora', ratio=.052, device=args.device,
+    train = SimpleNamespace(dataset_name=args.dataset, ratio=args.ratio, device=args.device,
         raw_data_dir=str(Path(args.raw_data_dir).resolve())+'/', n_dim=256,
         lr=.01, weight_decay=5e-4, epoch=args.epoch, eval_every=args.eval_every)
     rows, entries = [], []
@@ -152,8 +168,8 @@ def main():
             train, data, _, _ = set_dataset(train, get_dataset(train))
             _, _, h2 = conv_graph_multi(train, data)
         base = dict(source=code_digest(), runner=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            data=data_digest(data), dataset='cora', ratio=.052, gamma=args.gamma, T=args.temperature,
-            kernel='relu', basis=3000, condensation_seed=0, torch=str(torch.__version__),
+            data=data_digest(data), dataset=args.dataset, ratio=args.ratio, gamma=args.gamma, T=args.temperature,
+            kernel=kernel, basis=3000, condensation_seed=0, torch=str(torch.__version__),
             device=args.device, threads=4)
         path = out/'teachers'/f'{digest(base)}.pt'
         if path.exists():
@@ -162,7 +178,7 @@ def main():
             progress('Fitting teacher...')
             with redirect_stdout(log), redirect_stderr(log):
                 seed_everything(0)
-                features = get_kernel_features(h2, 'relu', 3000)
+                features = get_kernel_features(h2, kernel, 3000)
                 labels = F.one_hot(data.y[data.train_mask], train.num_class).double()
                 w = fit_logistic(features[data.train_mask], labels, args.gamma)
                 teacher = ((features@w)/args.temperature).softmax(1).clamp_min(1e-12)

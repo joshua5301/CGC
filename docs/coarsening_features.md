@@ -134,3 +134,24 @@ os.chdir("/content/GRIP")
 ```
 
 Local short-epoch runs are pipeline checks, not evidence of test performance.
+
+## Citeseer 3.6%
+
+`--dataset citeseer --ratio .036` uses the existing normalized-feature Citeseer
+loader, 120-node budget and erf teacher kernel. Defaults are gamma=.01, T=.2,
+mu=.1: the teacher/partition settings of the first reported validation tie from
+the earlier Citeseer sweep. Dropout stays .9 for the current coarsening protocol;
+this combination is not claimed to be a newly tuned Citeseer winner. All three
+variants share these settings and student seeds 3-12 (30 fits total).
+The Cora defaults remain unchanged.
+
+```python
+import os, subprocess
+subprocess.run(["git", "-C", "/content/GRIP", "pull", "--ff-only",
+                "https://github.com/joshua5301/GRIP.git", "main"],
+               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+os.chdir("/content/GRIP")
+%run coarsening_grip.py --dataset citeseer --ratio 0.036 --gamma 0.01 --temperature 0.2 --coefficient 0.1 --dropout 0.9 --repeat 10 --seed-start 3 --output /content/drive/MyDrive/GRIP_citeseer_coarsening_features
+```
+
+Completed fits resume from the output folder; Cora results use a separate folder.
