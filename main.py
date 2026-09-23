@@ -42,7 +42,7 @@ else:
     all_node_num = len(X_cond)
 if args.edges == 'mpnn_identity':
     out = MPNNIdentity(H0, data.edge_index, y_pred, all_node_num,
-                       mu=args.label_weight, seed=args.seed, depth=args.mpnn_depth,
+                       mu=args.label_weight, seed=args.seed, depth=args.mpnn_depth, rho=args.mpnn_rho,
                        batch_size=args.distance_batch_size,
                        median_iters=args.distance_median_iters).run(args.outer_iters)
     X_cond, y_cond, assign = out['H_cond'], out['Y_cond'], out['assign']

@@ -91,7 +91,7 @@ def summarize(output, manifest, repeats, dropouts):
             config = entry['config']
             rows.append(dict(id=entry['id'], dataset=config['dataset'], ratio=config['ratio'],
                              method=config['method'], gamma=config['gamma'], T=config['T'],
-                             coefficient=config['coefficient'], dropout=dropout,
+                             coefficient=config['coefficient'], rho=config['rho'], dropout=dropout,
                              val=100 * np.mean([r['val'] for r in runs]),
                              test=100 * np.mean([r['test'] for r in runs]),
                              test_std=100 * np.std([r['test'] for r in runs], ddof=1) if repeats > 1 else 0.,
@@ -109,6 +109,10 @@ def summarize(output, manifest, repeats, dropouts):
         for row in rows:
             best.setdefault((row['dataset'], row['ratio'], row['method']), row)
         atomic_json(output / 'best.json', list(best.values()))
+        best_by_rho = {}
+        for row in rows:
+            best_by_rho.setdefault((row['dataset'], row['ratio'], row['method'], row['rho']), row)
+        atomic_json(output / 'best_by_rho.json', list(best_by_rho.values()))
     return rows
 
 
@@ -120,6 +124,7 @@ def main():
     parser.add_argument('--gammas', default=None)
     parser.add_argument('--temperatures', default=None)
     parser.add_argument('--mus', default='0.1,0.3,1,3,10')
+    parser.add_argument('--rhos', default='0.5', help='mpnn comparison weights; raw always uses rho=0')
     parser.add_argument('--baseline-kl', default='0.1,0.2,0.5,1,2')
     parser.add_argument('--dropouts', default='0.1,0.5,0.9')
     parser.add_argument('--repeat', type=int, default=3)
@@ -147,6 +152,9 @@ def main():
     if not methods or not set(methods) <= {'mpnn', 'raw', 'distance', 'grip'}:
         raise ValueError('methods must be mpnn, raw, distance and/or grip')
     dropouts = numbers(args.dropouts)
+    rhos = list(dict.fromkeys(numbers(args.rhos)))
+    if not rhos or any(not np.isfinite(r) or not 0 <= r <= 1 for r in rhos):
+        raise ValueError('rhos must be finite and in [0,1]')
     if not dropouts or any(not 0 <= d < 1 for d in dropouts):
         raise ValueError('dropouts must lie in [0,1)')
     source = code_digest()
@@ -178,7 +186,8 @@ def main():
         case_entries = []
         for gamma, temp, method in itertools.product(gammas, temperatures, methods):
             coefficients = numbers(args.baseline_kl if method == 'grip' else args.mus)
-            for coefficient in coefficients:
+            method_rhos = rhos if method == 'mpnn' else ([0.] if method == 'raw' else [None])
+            for coefficient, rho in itertools.product(coefficients, method_rhos):
                 if coefficient < 0:
                     raise ValueError('coefficients must be nonnegative')
                 config = dict(source=source, data=fingerprint, dataset=dataset, ratio=ratio,
@@ -188,8 +197,8 @@ def main():
                               batch_size=args.batch_size, epoch=args.epoch, eval_every=args.eval_every,
                               student='GCN-2-256', lr=.01, weight_decay=5e-4, loss='uniform-soft-CE',
                               objective=method, comparison_depth=0 if method == 'raw' else 2,
-                              comparison_operator='(I+P_closed)/2' if method in ('mpnn', 'raw') else None,
-                              rho=0.5 if method in ('mpnn', 'raw') else None,
+                              comparison_operator='(1-rho)I+rho P_closed' if method in ('mpnn', 'raw') else None,
+                              rho=rho,
                               torch=str(torch.__version__), device=args.device, threads=args.threads)
                 entry = dict(id=digest(config), config=config)
                 case_entries.append(entry)
@@ -199,9 +208,10 @@ def main():
         for entry in case_entries:
             key, config = entry['id'], entry['config']
             gamma, temp, method, coefficient = (config[k] for k in ['gamma', 'T', 'method', 'coefficient'])
+            rho_label = f" rho={config['rho']:g}" if config['rho'] is not None else ''
             paths = [output / 'runs' / f'{key}_d{d:g}_r{r}.json' for d in dropouts for r in range(args.repeat)]
             if all(p.exists() for p in paths):
-                print(f'SKIP completed {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}', flush=True)
+                print(f'SKIP completed {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label}', flush=True)
                 continue
             condensed_path = output / 'condensed' / f'{key}.pt'
             if condensed_path.exists():
@@ -224,12 +234,12 @@ def main():
                     atomic_torch(teacher_path, logits.cpu())
                 f = (logits / temp).softmax(1)
                 seed_everything(args.seed)
-                print(f'Condense {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}', flush=True)
+                print(f'Condense {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label}', flush=True)
                 start = time.perf_counter()
                 diagnostics = {}
                 if method in ('mpnn', 'raw'):
                     result = MPNNIdentity(h0, data.edge_index, f, m, mu=coefficient, seed=args.seed,
-                                          depth=2 if method == 'mpnn' else 0,
+                                          depth=2 if method == 'mpnn' else 0, rho=config['rho'],
                                           batch_size=args.batch_size, median_iters=args.median_iters).run(args.outer_iters)
                     xc, yc, assignment = result['H_cond'], result['Y_cond'], result['assign']
                     history, diagnostics = result['history'], result['diagnostics']
@@ -267,7 +277,7 @@ def main():
                 model = GCN(data.num_features, 256, train_args.num_class, 2, dropout,
                             normalize=method != 'distance').to(args.device)
                 evaluation_data = served if method == 'distance' else [data, data_val, data_test]
-                print(f'Student {method} gamma={gamma:g} T={temp:g} coef={coefficient:g} dropout={dropout:g} seed={args.seed+repeat}', flush=True)
+                print(f'Student {method} gamma={gamma:g} T={temp:g} coef={coefficient:g}{rho_label} dropout={dropout:g} seed={args.seed+repeat}', flush=True)
                 val, test = model_training(model, train_args, evaluation_data[0], graph,
                                            evaluation_data[1], evaluation_data[2])
                 atomic_json(path, dict(config=config, dropout=dropout, repeat=repeat,

@@ -1,5 +1,44 @@
 # MPNN surrogate, evaluated with the existing two-layer GCN
 
+## Rho sweep after the full teacher search
+
+Set `os.environ['GRIP_SWEEP_PRESET'] = 'rho'` before running the Colab cell.
+It uses `R_rho=(1-rho)I+rho P_closed` with rho in {0, .05, .1, .2, .35, .5}
+and mu in {.3, 1, 3, 10}. The teacher is fixed within each dataset: Cora
+gamma=.01, T=.2; Citeseer gamma=.1, T=.2. Cora's T=.2 comes from the prior full
+sweep's shared best teacher setting for mpnn/raw; this differs from pilot T=1.
+
+The student remains the same two-layer GCN, uniform CE, dropout {.1,.5,.9},
+student seeds {0,1,2}. With the two default datasets this is 48 condensations
+and 432 student fits. GRIP is not retrained. rho=0 exactly reproduces the raw
+ablation, so a separate raw method is unnecessary. Compare matched mu/dropout/
+seed settings in summary.csv as well as validation-best settings per rho.
+
+Results go to `GRIP_mpnn_rho` on Drive. The compact table includes each rho's
+validation-best settings and ties. summary.csv includes rho; best_by_rho.json
+contains a single validation-selected setting per rho, while best.json selects
+across rho too. Config/cache keys include rho. This algorithm update changes
+source fingerprints, so older experiment caches are not imported; within this
+new sweep teacher logits are shared across rho/mu and reruns resume normally.
+
+The corresponding standalone option is `--mpnn_rho`; the sweep option is
+`--rhos`. rho=0 (and the supported rho=1 endpoint) are ablations rather than
+uniform guarantees for arbitrary root-and-neighbor dependent layers. For
+0<rho<1, the model-class envelope constant changes with rho. Objective values
+across rho must not be interpreted as directly comparable certified risks.
+
+```python
+import os, subprocess
+pull = subprocess.run(['git', '-C', '/content/GRIP', 'pull', '--ff-only'],
+                      capture_output=True, text=True)
+if pull.returncode:
+    raise RuntimeError(pull.stdout + pull.stderr)
+os.environ['GRIP_SWEEP_PRESET'] = 'rho'
+%run /content/GRIP/colab_distance.py
+```
+
+## Original fixed-rho protocol
+
 This is the default protocol in `colab_distance.py` and `sweep_distance.py`.
 The earlier GCN-specific `distance` method remains an explicitly named legacy
 option; it is NOT part of the default sweep.

@@ -51,6 +51,37 @@ def test_raw_ablation_and_initialization_match():
     torch.testing.assert_close(raw.feature_cost(0, 3), torch.cdist(raw.x, raw.z))
 
 
+@pytest.mark.parametrize('rho', [0., .05, .1, .2, .35, .5, 1.])
+def test_rho_polynomial_and_adjoint(rho):
+    base, edges = fixture()
+    obj = MPNNIdentity(base.x, edges, base.f, 3, base.assign, rho=rho, log=lambda _: None)
+    p, _ = closed_transition(edges, 15)
+    p = p.to_dense()
+    d = torch.cdist(obj.x, obj.z)
+    expected = (1-rho)**2 * d + 2*rho*(1-rho) * (p @ d) + rho**2 * (p @ p @ d)
+    torch.testing.assert_close(obj.feature_cost(0, 3), expected)
+    s = torch.nn.functional.one_hot(obj.assign, 3).double()
+    torch.testing.assert_close(expected[torch.arange(15), obj.assign].sum(),
+                               (obj.propagate(s, transpose=True) * d).sum())
+
+
+def test_zero_rho_reproduces_raw_optimization():
+    raw, edges = fixture(depth=0)
+    zero = MPNNIdentity(raw.x, edges, raw.f, 3, raw.assign, rho=0., mu=.3,
+                        batch_size=raw.batch_size, log=lambda _: None)
+    a, b = raw.run(5), zero.run(5)
+    torch.testing.assert_close(a['H_cond'], b['H_cond'], rtol=0, atol=0)
+    torch.testing.assert_close(a['assign'], b['assign'])
+    assert b['config']['rho'] == 0
+
+
+@pytest.mark.parametrize('rho', [-.1, 1.1, float('nan'), float('inf')])
+def test_invalid_rho(rho):
+    obj, edges = fixture()
+    with pytest.raises(ValueError, match='rho'):
+        MPNNIdentity(obj.x, edges, obj.f, 3, obj.assign, rho=rho)
+
+
 def test_descent_nonempty_simplex_and_batching():
     obj, _ = fixture(1)
     other, _ = fixture(3)

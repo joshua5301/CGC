@@ -1,11 +1,13 @@
 """Architecture-independent Q=I surrogate; see docs/mpnn_identity_design.md.
 
 P uniformly selects a closed-neighborhood member; it is NOT the student's
-aggregation matrix. Minimize mean (R^K D)[v,a_v] + mu KL, R=(I+P)/2.
+aggregation matrix. Minimize mean (R^K D)[v,a_v] + mu KL,
+R=(1-rho)I+rho P, with rho=0.5 by default.
 Structural deletion/metadata remainders and model-class sensitivity constants
 are not estimated here. This is a surrogate, not a computed risk certificate.
 """
 import torch
+import math
 from src.partition_distance import DistanceIdentity
 
 
@@ -32,21 +34,26 @@ def closed_transition(edge_index, n, device=None):
 
 class MPNNIdentity(DistanceIdentity):
     def __init__(self, x, edge_index, teacher, m, assign=None, mu=1., seed=0,
-                 batch_size=32, median_iters=30, tol=1e-6, depth=2, log=print):
+                 batch_size=32, median_iters=30, tol=1e-6, depth=2, log=print, rho=0.5):
         if not isinstance(depth, int) or depth < 0:
             raise ValueError('depth must be a nonnegative integer')
         self.depth = depth
+        if not math.isfinite(rho) or not 0 <= rho <= 1:
+            raise ValueError('rho must be finite and in [0,1]')
+        self.rho = float(rho) if depth else 0.0
         p, degree = closed_transition(edge_index, len(x), x.device)
         ids = torch.arange(len(x), device=x.device)
         identity = torch.sparse_coo_tensor(torch.stack([ids, ids]),
                                           torch.ones(len(x), device=x.device, dtype=torch.float64), p.shape)
-        r = (0.5 * p + 0.5 * identity).coalesce()
+        r = (self.rho * p + (1 - self.rho) * identity).coalesce()
         super().__init__(x, r, teacher, m, assign, mu, seed, batch_size, median_iters, tol, log)
         # Reuse the descent/median engine, but there is NO GCN mass correction.
         self.q.zero_()
         self.degree = degree
 
     def propagate(self, values, transpose=False):
+        if self.rho == 0:
+            return values
         operator = self.At if transpose else self.A
         for _ in range(self.depth):
             values = torch.sparse.mm(operator, values)
@@ -54,11 +61,11 @@ class MPNNIdentity(DistanceIdentity):
 
     @torch.no_grad()
     def run(self, outer_iters=20):
-        self.log(f'mpnn_identity: depth={self.depth}, rho=0.5, mu={self.mu:g}; '
-                 'comparison R=(I+P_closed)/2, uniform student loss; no certified risk value')
+        self.log(f'mpnn_identity: depth={self.depth}, rho={self.rho:g}, mu={self.mu:g}; '
+                 'comparison R=(1-rho)I+rho P_closed, uniform student loss; no certified risk value')
         result = super().run(outer_iters)
         result['config'].update(objective='mpnn_identity' if self.depth else 'raw_identity',
-                                depth=self.depth, rho=0.5, operator='(I+P_closed)/2',
+                                depth=self.depth, rho=self.rho, operator='(1-rho)I+rho P_closed',
                                 mass_correction=False, risk_certificate=False)
         result['diagnostics'] = dict(mean_closed_degree=float(self.degree.mean()),
                                      max_closed_degree=int(self.degree.max()),

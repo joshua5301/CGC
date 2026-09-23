@@ -29,6 +29,7 @@ def get_hyperparams():
     parser.add_argument('--distance_batch_size', type=int, default=32, help='distance_identity: representatives per GPU batch')
     parser.add_argument('--distance_median_iters', type=int, default=30, help='distance_identity: weighted median iterations')
     parser.add_argument('--mpnn_depth', type=int, default=2, help='mpnn_identity: comparison depth, 0 for the raw-feature ablation; student stays 2-layer GCN')
+    parser.add_argument('--mpnn_rho', type=float, default=0.5, help='mpnn_identity: neighbor comparison weight in [0,1]; 0 is the raw-feature ablation')
     parser.add_argument('--struct_student', type=str, default='gcn', choices=['gcn', 'faithful'],
                         help='structure_*: the condensed graph is the objective\'s own (raw-X medians, Q as given); gcn = main-table GCN served on (X, A_hat), '
                              'faithful = bias-free mean-aggregation student served on (X, P) [the bound applies]')
