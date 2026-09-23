@@ -148,3 +148,25 @@ mismatch of the student (diag_student_eps.py: +0.05 / +0.20).
 
 The raw-X representatives with an isolated condensed graph train a GCN to 84 as well (val 82.5 vs 81.7 for the
 A^2 X representatives at this density), in line with the near-zero train / serve mismatch of the student.
+
+### Full sweep, citeseer 3.6 % (A100, 3 seeds): raw X, k-means init, identity Q, GCN student
+
+gamma {0.01, 0.1, 1} x T {0.2, 0.5, 1, 2} x (beta {0, 1, 3, 10} x mu {0.3, 1, 3} + bound), 156 runs, val-selected dropout.
+Reference in the same cell: GRIP val 77.47 / test 73.90.
+
+| | val | test | final (D_H, D_S, D_KL) per node | cells (min / med / max), singletons |
+|---|---|---|---|---|
+| best val: gamma 0.1, T 0.5, beta 0, mu 3 | 75.47 | 73.90 | 0.169, 0.622, 0.019 | 1 / 23 / 113, 6 |
+| best val with beta > 0: gamma 0.1, T 0.5, beta 10, mu 3 | 75.20 | 72.57 | 0.168, 0.188, 0.215 | 1 / 4 / 242, 16 |
+| gamma 0.1, T 0.5, beta 1, mu 3 | 74.93 | 73.63 | 0.168, 0.153, 0.100 | 1 / 8 / 347, 11 |
+| bound coefficients (gamma 0.1, T 0.5) | 73.80 | 72.30 | 0.168, 0.200, 0.250 | 1 / 3 / 294, 23 |
+
+- At the best setting the test accuracy equals GRIP's (73.9) but validation is 2 points lower, and the best setting has
+  beta = 0: the structure term lowers D_S from ~0.6 to ~0.15-0.2 without any gain in accuracy; the bound coefficients
+  are 1-1.5 below. D_H is inert on citeseer (0.1675-0.169 in every run: row-normalised sparse features, all distances
+  alike), so the dynamics are driven by D_S and D_KL.
+- gamma = 1 and T = 2 collapse (34 % / 18 % at gamma 1; 58-67 % at gamma 0.1, T 2): the soft labels become nearly
+  uniform (D_KL ~ 1e-3) and 120 isolated raw-X nodes carry no signal for the GCN; GRIP's main-table setting for
+  citeseer is T = 0.2 for the same reason.
+- The k-means initialisation on raw X leaves 10-27 singleton cells (of 120) that the non-empty constraint then
+  protects, and one cell of 240-370 nodes; the best runs are the less imbalanced ones (6 singletons, max 113).
