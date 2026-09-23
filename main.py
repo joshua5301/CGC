@@ -9,6 +9,7 @@ from src.edges import coarsen, to_graph
 from src.partition_ot import build_transition, transition_to_edges, partition_ot_1hop
 from src.partition_ot_entropic import partition_ot_1hop_entropic
 from src.partition_struct import structure_bound, bound_coefficients, column_sum_max, kmeans_nonempty
+from src.partition_distance import DistanceIdentity
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -31,12 +32,25 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-if args.edges.startswith('structure') and args.struct_init == 'kmeans':
+if args.edges == 'distance_identity':
+    all_node_num = budget_node_num
+elif args.edges.startswith('structure') and args.struct_init == 'kmeans':
     assign, all_node_num = torch.from_numpy(kmeans_nonempty(H0.cpu().numpy(), budget_node_num, args.seed)).to(X.device), budget_node_num
 else:
     X_cond, y_cond, assign = partition(X, y_pred, budget_node_num, args.kl_weight)
     all_node_num = len(X_cond)
-if args.edges == 'none':
+if args.edges == 'distance_identity':
+    out = DistanceIdentity(H0, normalize_adj_sparse(data), y_pred, all_node_num,
+                           mu=args.label_weight, seed=args.seed,
+                           batch_size=args.distance_batch_size,
+                           median_iters=args.distance_median_iters).run(args.outer_iters)
+    X_cond, y_cond, assign = out['H_cond'], out['Y_cond'], out['assign']
+    ids = torch.arange(all_node_num, device=X_cond.device)
+    edge_index, edge_attr = torch.stack([ids, ids]), torch.ones(all_node_num, device=X_cond.device)
+    data = attach_propagation(data)
+    if data_val is not None:
+        data_val, data_test = attach_propagation(data_val), attach_propagation(data_test)
+elif args.edges == 'none':
     edge_index, edge_attr = torch.eye(all_node_num).nonzero().t().to(X_cond.device), torch.ones(all_node_num, device=X_cond.device)
 elif args.edges == 'ot_1hop':
     # 1-hop neighbourhood-OT objective on the raw features; the GRIP partition (on A^2 X) is the initial assignment

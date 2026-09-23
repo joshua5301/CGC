@@ -19,13 +19,15 @@ def get_hyperparams():
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
-    parser.add_argument('--edges', type=str, default='none', choices=['none', 'coarsen', 'ot_1hop', 'structure_identity', 'structure_median'],
+    parser.add_argument('--edges', type=str, default='none', choices=['none', 'coarsen', 'ot_1hop', 'structure_identity', 'structure_median', 'distance_identity'],
                         help="condensed edges: none (A' = I on A^2 X), coarsen (A' = cell-averaged propagation matrix on A X), "
                              "ot_1hop (1-hop neighbourhood-OT objective on raw X: representatives, row-stochastic A' and partition by block descent)")
     parser.add_argument('--root_weight', type=float, default=1.0, help='ot_1hop: alpha (root distance)')
     parser.add_argument('--neighbor_weight', type=float, default=1.0, help='ot_1hop: beta (neighbourhood W1)')
     parser.add_argument('--label_weight', type=float, default=1.0, help='ot_1hop: mu (label KL)')
     parser.add_argument('--outer_iters', type=int, default=5, help='ot_1hop: outer block-descent iterations')
+    parser.add_argument('--distance_batch_size', type=int, default=32, help='distance_identity: representatives per GPU batch')
+    parser.add_argument('--distance_median_iters', type=int, default=30, help='distance_identity: weighted median iterations')
     parser.add_argument('--struct_student', type=str, default='gcn', choices=['gcn', 'faithful'],
                         help='structure_*: the condensed graph is the objective\'s own (raw-X medians, Q as given); gcn = main-table GCN served on (X, A_hat), '
                              'faithful = bias-free mean-aggregation student served on (X, P) [the bound applies]')
