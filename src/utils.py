@@ -53,37 +53,7 @@ def normalize_adj_sparse(data):
     return adj
 
 
-def attach_transition(data, propagate=False):
-    """Replace the edge weights by the row-stochastic 1-hop transition P used by the ot_1hop objective.
-    propagate=True also lifts the node features to P X, so that a one-hop student sees the same two hops
-    as the A' = I path (x = P X, neighbours weighted by P)."""
-    from src.partition_ot import build_transition, transition_to_edges
-    P, _ = build_transition(data.edge_index.cpu().numpy(), data.x.shape[0])
-    ei, ea = transition_to_edges(P)
-    data.edge_index = torch.from_numpy(ei).long().to(data.x.device)
-    data.edge_attr = torch.from_numpy(ea).float().to(data.x.device)
-    if propagate:
-        data.x = torch.sparse.mm(torch.sparse_coo_tensor(data.edge_index.flip(0), data.edge_attr, (len(data.x),) * 2), data.x)
-    return data
-
-
-def attach_propagation(data):
-    adj = normalize_adj_sparse(data).coalesce().to(data.x.device)
-    data.edge_index, data.edge_attr = adj.indices(), adj.values()
-    return data
-
-
-def soft_label_ce(log_probs, targets, sample_weight=None):
-    per_node = -(targets * log_probs).sum(1)
-    if sample_weight is None:
-        return per_node.mean()
-    weights = sample_weight.to(device=per_node.device, dtype=per_node.dtype)
-    if weights.shape != per_node.shape or not torch.isfinite(weights).all() or (weights < 0).any() or weights.sum() <= 0:
-        raise ValueError('sample weights must match training nodes, be finite/nonnegative, and have positive sum')
-    return (weights / weights.sum() * per_node).sum()
-
-
-def model_training(model, args, data, graph, data_val=None, data_test=None, sample_weight=None):
+def model_training(model, args, data, graph, data_val=None, data_test=None):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best_val_acc = test_acc = 0
     for epoch in range(1, args.epoch+1):
@@ -93,7 +63,7 @@ def model_training(model, args, data, graph, data_val=None, data_test=None, samp
 
         model.train()
         output = model(graph)
-        loss = soft_label_ce(output[graph.train_mask], graph.y[graph.train_mask], sample_weight)
+        loss = -(graph.y[graph.train_mask] * output[graph.train_mask]).sum(1).mean()
 
         optimizer.zero_grad()
         loss.backward()
