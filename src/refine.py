@@ -30,6 +30,8 @@ def sgc_risk(X, labels, W, b):
 
 @torch.no_grad()
 def refine_candidate(X, labels, centers, assignment, W, beta, mu, scales, rounds=10, steps=50):
+    if not 0 <= beta <= 1:
+        raise ValueError('refine_beta must lie in [0, 1]')
     centers, assignment = centers.clone(), assignment.clone()
     W = W - W.mean(1, keepdim=True)
     logits = X @ W
@@ -39,7 +41,7 @@ def refine_candidate(X, labels, centers, assignment, W, beta, mu, scales, rounds
     m = len(centers)
     def feature_cost(C):
         delta = C[assignment] - X
-        return delta.norm(dim=1).mean() / sx + beta * (delta @ W).square().sum(1).mean() / sz
+        return (1 - beta) * delta.norm(dim=1).mean() / sx + beta * (delta @ W).square().sum(1).mean() / sz
     def objective(C, Y):
         kl = (entropy - (labels * Y[assignment].clamp(min=EPS).log()).sum(1)).mean()
         return float(feature_cost(C) + mu * kl / sy)
@@ -48,7 +50,7 @@ def refine_candidate(X, labels, centers, assignment, W, beta, mu, scales, rounds
     for _ in range(rounds):
         costs = []
         for x, f, h, ent in zip(X.split(2048), labels.split(2048), logits.split(2048), entropy.split(2048)):
-            cost = torch.cdist(x, centers) / sx + beta * torch.cdist(h, centers @ W).square() / sz
+            cost = (1 - beta) * torch.cdist(x, centers) / sx + beta * torch.cdist(h, centers @ W).square() / sz
             costs.append(cost + mu * (ent[:, None] - f @ Y.clamp(min=EPS).log().T) / sy)
         costs = torch.cat(costs).cpu().numpy()
         a = assignment.cpu().numpy().copy()
@@ -64,7 +66,7 @@ def refine_candidate(X, labels, centers, assignment, W, beta, mu, scales, rounds
         counts = torch.bincount(assignment, minlength=m).to(X.dtype)[:, None]
         for _ in range(steps):
             delta = centers[assignment] - X
-            rows = delta / delta.norm(dim=1, keepdim=True).clamp(min=EPS) / sx
+            rows = (1 - beta) * delta / delta.norm(dim=1, keepdim=True).clamp(min=EPS) / sx
             rows += 2 * beta * (delta @ W) @ W.T / sz
             gradient = torch.zeros_like(centers).index_add_(0, assignment, rows) / len(X)
             direction = gradient * len(X) / counts
@@ -92,7 +94,7 @@ def refine_candidate(X, labels, centers, assignment, W, beta, mu, scales, rounds
 
 def refine_sgc(X, labels, cluster_num, mu=.5, beta=.1, rounds=5,
                ridge=1e-3, sgc_steps=1000, grip_steps=1000, tolerance=1e-6):
-    if beta < 0 or mu < 0 or ridge <= 0 or tolerance < 0 or min(rounds, sgc_steps, grip_steps) < 1:
+    if not 0 <= beta <= 1 or mu < 0 or ridge <= 0 or tolerance < 0 or min(rounds, sgc_steps, grip_steps) < 1:
         raise ValueError('invalid SGC refinement parameters')
     X, labels = X.detach().double(), labels.detach().double().clamp(min=EPS)
     labels = labels / labels.sum(1, keepdim=True)

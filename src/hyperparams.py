@@ -37,6 +37,8 @@ def get_hyperparams():
         parser.error('invalid label metric parameters')
     if args.sgc_refine and args.metric_alpha != 0:
         parser.error('sgc_refine starts from unmodified GRIP; use metric_alpha=0')
+    if not 0 <= args.refine_beta <= 1:
+        parser.error('refine_beta must lie in [0, 1]')
     return args
 
 BEST_HYPERPARAMS_DICT = {
