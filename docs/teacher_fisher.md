@@ -12,7 +12,10 @@ teacher probabilities (maximum absolute error <=1e-7). Fold the transform into
 the classifier and verify its probabilities too (<=1e-9). Abort on mismatch.
 This reconstruction deliberately supports only the full-landmark ReLU source.
 
-For z=P^2 X, compute p=softmax(t(z)/T) at the original label temperature. Keep
+For z=P^2 X, compute p=softmax(t(z)/tau) at fixed metric temperature tau=1.
+Keep label probabilities and their reconstruction checks at the original T=10.
+Metric and label temperatures are saved separately and included in cache keys.
+The default output directory ends in `_tau1`, preserving the earlier run. Keep
 landmarks, kernel normalization, transform and classifier fixed. Differentiate
 each class log probability with respect to query z, square each gradient,
 weight by that class probability, sum classes, and average original nodes:
@@ -25,7 +28,9 @@ The classwise derivatives are taken before summing, avoiding the zero expected
 score. Teacher fitting is not differentiated. No test or validation labels enter
 the metric. Query batches of 64 limit autograd memory. The score is a global
 diagonal Fisher heuristic, not a certified KL approximation or risk bound after
-averaging, diagonalization and mixing. Temperature affects the metric.
+averaging, diagonalization and mixing. For a fixed fitted teacher, label
+temperature does not affect this metric. Changes to gamma or the fitted teacher
+can still affect it. The student-metric control depends on its source students.
 
 Sweep alpha=0,.05,.1,.3,.5,.8,.95. Alpha zero reuses exact original GRIP.
 Include the previous student-centered-logit metric at alpha=.5 as a control.
@@ -59,5 +64,5 @@ if r.returncode:
 ```
 
 ```python
-%run teacher_fisher_grip.py --diagnostic-dir /content/drive/MyDrive/GRIP_cora_fisher_diagnostic --output /content/drive/MyDrive/GRIP_cora_teacher_fisher
+%run teacher_fisher_grip.py --diagnostic-dir /content/drive/MyDrive/GRIP_cora_fisher_diagnostic --output /content/drive/MyDrive/GRIP_cora_teacher_fisher_tau1
 ```

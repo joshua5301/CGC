@@ -3,6 +3,8 @@ import torch
 import torch.nn.functional as F
 from src.teacher import get_kernel_values, fit_logistic
 
+METRIC_TEMPERATURE = 1.0
+
 
 def teacher_fisher(z, labels, train_mask, reference_probabilities, config, batch_size=64):
     # The earlier diagnostic saved probabilities, but not the fitted teacher.
@@ -32,7 +34,7 @@ def teacher_fisher(z, labels, train_mask, reference_probabilities, config, batch
     for chunk in z.split(batch_size):
         x = chunk.detach().double().clone().requires_grad_(True)
         # Basis, bandwidth and fitted parameters stay fixed. Differentiate query only.
-        logp = (get_kernel_values(x, basis, 'relu') @ beta / config['T']).log_softmax(1)
+        logp = (get_kernel_values(x, basis, 'relu') @ beta / METRIC_TEMPERATURE).log_softmax(1)
         probabilities = logp.detach().exp()
         for c in range(logp.shape[1]):
             gradient, = torch.autograd.grad(logp[:, c].sum(), x,
@@ -42,6 +44,7 @@ def teacher_fisher(z, labels, train_mask, reference_probabilities, config, batch
     if not torch.isfinite(score).all() or float(score.mean()) <= 0:
         raise ValueError('Invalid teacher Fisher sensitivities')
     return dict(score=score.cpu(), basis=basis.cpu(), beta=beta.cpu(),
-                temperature=config['T'], source_probability_max_error=source_error,
+                metric_temperature=METRIC_TEMPERATURE, label_temperature=config['T'],
+                source_probability_max_error=source_error,
                 folded_probability_max_error=fold_error,
                 definition='mean_nodes sum_classes p_c * (d log p_c / d z_k)^2')

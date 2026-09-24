@@ -13,7 +13,7 @@ from torch_geometric import seed_everything
 from extend_robust import paired_stats
 from fisher_diagnostic import identity_graph, parameters, save_csv
 from diagonal_metric import sensitivity, condense
-from teacher_fisher_metric import teacher_fisher
+from teacher_fisher_metric import teacher_fisher, METRIC_TEMPERATURE
 from fisher_grip import load_source, sha, train_dual, prediction_diagnostics
 from src.dataloader import get_dataset, set_dataset
 from src.models import GCN
@@ -30,7 +30,7 @@ PROTOCOLS = ('graphless', 'gcn_transfer')
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--diagnostic-dir', default='/content/drive/MyDrive/GRIP_cora_fisher_diagnostic')
-    p.add_argument('--output', default='/content/drive/MyDrive/GRIP_cora_teacher_fisher')
+    p.add_argument('--output', default='/content/drive/MyDrive/GRIP_cora_teacher_fisher_tau1')
     p.add_argument('--raw-data-dir', default='/content/data/')
     p.add_argument('--partition-steps', type=int, default=100)
 
@@ -83,6 +83,7 @@ def main():
         print(f'Cora .052; frozen seeds {provenance["seeds"]}; evaluation seeds {seeds[0]}-{seeds[-1]}.')
         print(f'gamma={source_config["gamma"]:g}, T={source_config["T"]:g}, mu={source_config["mu"]:g}, '
               f'dropout={source_config["dropout"]:g}; {len(VARIANTS)*len(seeds)} fits, two evaluation domains.')
+        print(f'Fisher temperature tau={METRIC_TEMPERATURE:g}; label temperature T={source_config["T"]:g}.')
         z, teacher, c0 = (source[key].double().to(args.device) for key in ('Z', 'F', 'C'))
         zdata = identity_graph(z, teacher)
         # Evaluation targets/masks belong to original nodes, not condensed labels.
@@ -92,6 +93,7 @@ def main():
         hashes = {name: sha(Path(__file__).with_name(name)) for name in
                   ('teacher_fisher_grip.py', 'teacher_fisher_metric.py', 'diagonal_metric.py', 'fisher_grip.py', 'fisher_partition.py', 'fisher_diagnostic.py', 'extend_robust.py')}
         base = dict(source=code_digest(), helpers=hashes, provenance=provenance,
+            metric_temperature=METRIC_TEMPERATURE, label_temperature=source_config['T'],
             partition_steps=args.partition_steps,
             coefficient=source_config['mu'], device=args.device,
             normalization='original-GRIP-normalization-in-scaled-space;global-teacher-KL')
