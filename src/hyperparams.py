@@ -23,11 +23,20 @@ def get_hyperparams():
     parser.add_argument('--metric_pairs', type=int, default=4096)
     parser.add_argument('--metric_ridge', type=float, default=1e-3)
     parser.add_argument('--metric_steps', type=int, default=300)
+    parser.add_argument('--sgc_refine', action='store_true')
+    parser.add_argument('--refine_beta', type=float, default=0.1)
+    parser.add_argument('--refine_rounds', type=int, default=5)
+    parser.add_argument('--refine_tolerance', type=float, default=1e-6)
+    parser.add_argument('--sgc_ridge', type=float, default=1e-3)
+    parser.add_argument('--sgc_steps', type=int, default=1000)
+    parser.add_argument('--grip_steps', type=int, default=1000)
     parser.add_argument('--gammas', type=str, default='0.0001,0.001,0.01,0.1,1', help='diagnostics: comma list of gamma values')
 
     args = parser.parse_args()
     if not 0 <= args.metric_alpha < 1 or args.metric_pairs < 1 or args.metric_ridge <= 0 or args.metric_steps < 1:
         parser.error('invalid label metric parameters')
+    if args.sgc_refine and args.metric_alpha != 0:
+        parser.error('sgc_refine starts from unmodified GRIP; use metric_alpha=0')
     return args
 
 BEST_HYPERPARAMS_DICT = {

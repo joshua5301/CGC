@@ -6,6 +6,7 @@ from src.dataloader import *
 from src.teacher import get_teacher_labels
 from src.partition import partition
 from src.metric import label_scale
+from src.refine import refine_sgc
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -28,7 +29,19 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-if args.metric_alpha > 0:
+if args.sgc_refine:
+    result = refine_sgc(X, y_pred, budget_node_num, args.kl_weight, args.refine_beta,
+                        args.refine_rounds, args.sgc_ridge, args.sgc_steps,
+                        args.grip_steps, args.refine_tolerance)
+    if data_val is None:
+        prediction = (X.double() @ result['W'] + result['b']).argmax(1)
+        val = (prediction[data.val_mask] == data.y[data.val_mask]).double().mean()
+        test = (prediction[data.test_mask] == data.y[data.test_mask]).double().mean()
+        print(f'SGC val {100 * val:.2f} test {100 * test:.2f} | teacher risk {result["risk"]:.8f}')
+    else:
+        print(f'SGC teacher risk {result["risk"]:.8f}; evaluation supported for transductive datasets only')
+    raise SystemExit(0)
+elif args.metric_alpha > 0:
     scale = label_scale(X, y_pred, args.metric_alpha, args.metric_pairs,
                         args.metric_ridge, args.metric_steps, args.seed)
     X_cond, y_cond = partition(X * scale, y_pred, budget_node_num, args.kl_weight)
