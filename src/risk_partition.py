@@ -52,11 +52,14 @@ def seed_partition(X, Q, m, B, generator, block_size):
 
 @torch.no_grad()
 def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
-                   atol=1e-12, rtol=1e-10, checkpoints=()):
+                   atol=1e-12, rtol=1e-10, checkpoints=(), objective_mode='combined',
+                   initial_state=None, return_initial_state=False):
     if not 1 <= m <= len(H) or not math.isfinite(B) or B <= 0:
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
         raise ValueError('Invalid partition solver settings')
+    if objective_mode not in ('combined', 'variance'):
+        raise ValueError('Require combined or variance objective')
 
     if H.is_cuda:
         torch.cuda.synchronize(H.device)
@@ -70,9 +73,19 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
 
     N, d = X.shape
     K = Q.shape[1]
-    alpha, beta = B * B / 4, 2 * B
+    alpha, beta = B * B / 4, 2 * B if objective_mode == 'combined' else 0.0
     generator = torch.Generator(device=X.device).manual_seed(seed)
-    assignment = seed_partition(X, Q, m, B, generator, block_size)
+    if initial_state is None:
+        assignment = seed_partition(X, Q, m, B, generator, block_size)
+    else:
+        assignment = initial_state['assignment'].to(device=X.device, dtype=torch.long).clone()
+        if assignment.shape != (N,) or int(assignment.min()) < 0 or int(assignment.max()) >= m:
+            raise ValueError('Invalid initial assignment')
+        if bool((torch.bincount(assignment, minlength=m) == 0).any()):
+            raise ValueError('Initial partition must have no empty cells')
+        generator.set_state(initial_state['generator_state'].cpu())
+    saved_initial = dict(assignment=assignment.cpu().clone(),
+                         generator_state=generator.get_state()) if return_initial_state else None
     x2, q2 = X.square().sum(1), Q.square().sum(1)
     energy, moment = x2.mean(), X.T @ Q / N
 
@@ -190,6 +203,10 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                   moves=moves_history, sweeps=len(moves_history),
                   converged=converged, B=float(B), seed=int(seed))
     result['seconds'] = time.perf_counter() - started
+    result['objective_mode'] = objective_mode
+    result['bound_J'] = B * B / 4 * result['V'] + 2 * B * result['moment_error']
+    if return_initial_state:
+        result['initial_state'] = saved_initial
     if checkpoints:
         result['snapshots'] = snapshots
     return result

@@ -147,3 +147,30 @@ space and count toward the same trial budget. Missing parameters are sampled.
 Increasing n_trials resumes the stored studies; changing the revision or protocol
 creates separate caches. No local training or smoke tests were run.
 
+## Contribution of the moment term
+
+`src.objective_ablation.compare_objectives` accepts selected risk configurations
+and evaluates initial, variance-only and combined partitions. It generates and
+saves one initial assignment and the post-initialization random-generator state
+per partition seed. Both optimizers copy that assignment and restore that state,
+so initial membership and per-sweep node order are shared. GPU reductions are not
+forced to be bitwise deterministic. Teacher labels are generated once and cached.
+
+The variance-only objective is B² V / 4; the combined objective adds 2 B ||E||.
+B, teacher/student settings, solver caps and numerical tolerances stay fixed.
+Both use arithmetic feature representatives and mean teacher labels. The shared
+initialization still uses teacher labels: this tests the moment term during
+optimization, not all uses of labels or a separately tuned k-means baseline.
+
+The objective column reports the method's optimized quantity. The bound_J column
+always evaluates B² V / 4 + 2 B ||E||, including for variance-only results. Its
+monotonicity is guaranteed by acceptance checks only in the combined mode.
+Summary and paired CSVs report validation accuracy in percent and paired differences
+in percentage points. The combined-minus-variance row measures the incremental
+effect under the fixed selected configuration and iteration budget. The 95%
+Student-t intervals cover GCN seed variability separately per partition seed;
+they do not establish generalization across partitions or data splits. All runs
+use two-layer GCN and uniform CE, with no test evaluation or hyperparameter search.
+Interrupted student evaluations resume from saved rows. No local model execution
+or smoke tests were performed.
+
