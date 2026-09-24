@@ -223,3 +223,22 @@ include variance_term, correction_term, moment_term and mass_tv; the first three
 sum to J_final. The first few candidate move deltas are verified against complete
 objective recomputation at runtime in Colab. Local checks are syntax-only.
 
+## Optional mass-weighted student CE
+
+`run_experiments(loss_weighting="mass")` is an explicit diagnostic alternative to
+the default uniform loss. Each cell CE is weighted by counts/counts.sum(), with
+no extra division by the number of cells. The same weighting is used during
+Optuna search and final student repeats. Student architecture stays two-layer GCN;
+validation/test accuracy remains the ordinary node accuracy. Partition objectives
+and initialization are unchanged. Use method="risk" for the original uncorrected
+partition when studying its mass-weighted training assumption.
+
+The weighting is stored in protocol, cache identity and summary, so uniform and
+mass experiments cannot reuse student scores. Direct calls to _train_student with
+mass weighting must supply counts; otherwise they fail rather than silently use
+uniform CE. All existing ablation/comparison APIs retain uniform CE by default.
+Comparisons of independently tuned best results measure the full training protocol;
+attributing a difference solely to weighting requires matching search settings or
+evaluating the same condensed artifact under both losses. Local verification was
+limited to syntax and diff checks, without model execution or smoke tests.
+

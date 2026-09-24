@@ -78,7 +78,18 @@ def _accuracy(model, evaluation):
     return float(correct.float().mean() if mask is None else correct[mask].float().mean())
 
 
-def _train_student(cx, cy, validation, params, seed, settings, testing=None):
+def _train_student(cx, cy, validation, params, seed, settings, testing=None, counts=None):
+    weighting = settings.get('loss_weighting', 'uniform')
+    if weighting not in ('uniform', 'mass'):
+        raise ValueError('Require uniform or mass loss weighting')
+    weights = None
+    if weighting == 'mass':
+        if counts is None:
+            raise ValueError('Mass-weighted CE requires condensed cell counts')
+        weights = counts.to(device=cx.device, dtype=cy.dtype)
+        if weights.shape != (len(cx),) or not bool(torch.isfinite(weights).all()) or bool((weights <= 0).any()):
+            raise ValueError('Require positive finite mass for every representative')
+        weights = weights / weights.sum()
     seed_everything(seed)
     model = GCN(cx.shape[1], settings['hidden'], cy.shape[1], 2, params['dropout']).to(cx.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=params['lr'],
@@ -90,7 +101,8 @@ def _train_student(cx, cy, validation, params, seed, settings, testing=None):
                                          weight_decay=params['weight_decay'])
         model.train()
         optimizer.zero_grad(set_to_none=True)
-        loss = -(cy * _forward(model, cx)).sum(1).mean()
+        losses = -(cy * _forward(model, cx)).sum(1)
+        loss = losses.mean() if weights is None else (weights * losses).sum()
         loss.backward()
         optimizer.step()
         if epoch % settings['eval_every'] == 0 or epoch == settings['epochs']:
@@ -112,7 +124,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     final_seeds=tuple(range(100, 110)), partition=None, teacher=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
-                    grip_steps=300, evaluate_test=True, initial_configs=()):
+                    grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform'):
+    if loss_weighting not in ('uniform', 'mass'):
+        raise ValueError('Require uniform or mass loss weighting')
     if method not in ('risk', 'grip', 'transport', 'corrected') or grip_steps < 1:
         raise ValueError('Require risk, grip, transport or corrected and positive grip_steps')
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
@@ -136,7 +150,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
     solver.update(partition or {})
     if method == 'corrected':
         solver['objective_mode'] = 'uniform'
-    settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden)
+    settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting=loss_weighting)
     output_dir, device = Path(output_dir), torch.device(device)
     output_dir.mkdir(parents=True, exist_ok=True)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True,
@@ -188,7 +202,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                             teacher=teacher_config, seed=seed, partition=solver,
                             space=space, search_seeds=list(search_seeds),
                             final_seeds=list(final_seeds), student=settings,
-                            lr=lr, weight_decay=weight_decay, layers=2, loss='uniform_soft_ce')
+                            lr=lr, weight_decay=weight_decay, layers=2, loss=f'{loss_weighting}_soft_ce')
             case = output_dir / f'{name}_{ratio:g}_{_fingerprint(protocol)}'
             case.mkdir(parents=True, exist_ok=True)
             (case / 'protocol.json').write_text(json.dumps(protocol, indent=2), encoding='utf-8')
@@ -249,7 +263,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                         params[key] = trial.suggest_float(key, **specification)
                 condensed, artifact = get_condensed(params)
                 cx, cy = condensed['x'].to(device), condensed['y'].to(device)
-                values = [_train_student(cx, cy, validation, params, s, settings)[0]
+                values = [_train_student(cx, cy, validation, params, s, settings,
+                                         counts=condensed['counts'])[0]
                           for s in search_seeds]
                 for key, value in dict(config=params, artifact=artifact, validation_runs=values,
                                        nodes=len(condensed['x']),
@@ -284,7 +299,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 records = []
                 for s in final_seeds:
                     val, test, epoch = _train_student(cx, cy, validation, params, s,
-                                                     settings, testing if evaluate_test else None)
+                                                     settings, testing if evaluate_test else None,
+                                                     counts=condensed['counts'])
                     records.append(dict(seed=s, validation=val,
                                         test=test if test is not None else np.nan, best_epoch=epoch))
                 final = pd.DataFrame(records)
@@ -294,7 +310,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 del cx, cy
             summaries.append(dict(
                 dataset=name, ratio=ratio, method=method, nodes=best.user_attrs['nodes'],
-                requested_nodes=m, **params,
+                requested_nodes=m, loss_weighting=loss_weighting, **params,
                 search_val=100 * best.value, final_val=100 * final['validation'].mean(),
                 final_val_std=100 * final['validation'].std(ddof=1) if len(final) > 1 else 0.0,
                 test_mean=100 * final['test'].mean(),
