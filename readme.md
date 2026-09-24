@@ -21,3 +21,49 @@ measured SGC teacher risk decreases, without a GCN-risk or global-optimum guaran
 Beta must lie in [0, 1]; beta=0 uses feature distance only and beta=1 uses output
 distance only. Normalization is fixed within each candidate optimization.
 
+## Risk-based partitioning in Colab
+
+`src.risk_partition.risk_partition` builds a partition without GRIP initialization.
+It uses bound-derived D² seeding, then proposes node moves on the GPU. Each batch
+is accepted only when the recomputed global objective decreases; rejected batches
+are split recursively. Features are centered and RMS-scaled during condensation,
+then representative features are restored to the original space.
+
+`src.risk_experiment.run_experiments` is an importable experiment API, not a CLI.
+It reuses the dataset loader, kernel teacher, and two-layer GCN. Evaluation always
+uses uniform soft-label CE. The original-graph GCN computation uses pre-normalized
+sparse adjacency; the condensed graph has self-loops only. Optuna selects settings
+using validation results, and test is evaluated only for the selected settings.
+Final repeats vary the GCN seed on one fixed condensed dataset.
+
+After cloning the repository and preparing `/content/data/`, install `optuna` in
+the notebook, then call:
+
+```python
+from src.risk_experiment import run_experiments
+
+results = run_experiments(
+    datasets={"cora": [0.013, 0.026, 0.052]},
+    output_dir="/content/drive/MyDrive/GRIP_results/risk_v1",
+    space={"B": {"low": 0.01, "high": 100.0, "log": True},
+           "dropout": [0.1, 0.5, 0.9]},
+    n_trials=20,
+)
+results
+```
+
+Search parameters support categorical lists or `suggest_float` keyword dictionaries
+for `B`, `dropout`, `lr`, and `weight_decay`. `teacher` can override `kernel`,
+`gamma`, `temperature`, and `basis`; otherwise the existing dataset/ratio defaults
+are used. `partition` controls `max_sweeps`, `block_size`, `atol`, and `rtol`.
+Dataset/ratio pairs use the existing `BUDGET` and `BEST_HYPERPARAMS_DICT` tables.
+
+Each configuration stores its Optuna database, condensed tensors, best settings,
+and evaluation CSVs in a separate output directory. Increasing `n_trials` resumes
+the same study. `converged=False` reports a solver iteration limit, not convergence.
+
+`B` controls the condensation objective; it does not constrain the evaluated GCN.
+The linear-student, mass-weighted-CE bound does not certify this GCN evaluation.
+The implementation has only been statically checked locally, not executed or
+smoke-tested. See [the derivation and design](docs/risk_bound_partition_design.md).
+
