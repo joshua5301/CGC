@@ -21,6 +21,7 @@ from src.models import GCN
 from src.partition import partition as grip_partition
 from src.risk_partition import risk_partition
 from src.uniform_transport import uniform_transport
+from src.gcn_aware import gcn_aware_partition
 from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
 
@@ -124,11 +125,18 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     final_seeds=tuple(range(100, 110)), partition=None, teacher=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
-                    grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform'):
+                    grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
+                    aware=None):
     if loss_weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
-    if method not in ('risk', 'grip', 'transport', 'corrected') or grip_steps < 1:
-        raise ValueError('Require risk, grip, transport or corrected and positive grip_steps')
+    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware') or grip_steps < 1:
+        raise ValueError('Unknown method or invalid grip_steps')
+    aware = dict(aware or {})
+    if method == 'gcn_aware':
+        if loss_weighting != 'uniform':
+            raise ValueError('GCN-aware matching requires uniform student CE')
+        if set(aware.get('probe_seeds', (1000, 1001))) & (set(search_seeds) | set(final_seeds)):
+            raise ValueError('Use separate probe and evaluation seeds')
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
         raise ValueError('Require positive trial/epoch counts and nonempty evaluation seeds')
     if space is None:
@@ -198,6 +206,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             protocol = dict(version=3, revision=revision, torch=str(torch.__version__),
                             method=method, grip_steps=grip_steps, evaluate_test=evaluate_test,
                             initial_configs=initial_configs,
+                            aware=aware,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
                             teacher=teacher_config, seed=seed, partition=solver,
                             space=space, search_seeds=list(search_seeds),
@@ -228,7 +237,12 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
                 Q = get_labels(params)
-                if method != 'grip':
+                if method == 'gcn_aware':
+                    feature_cache.clear()
+                    gc.collect()
+                    condensed = gcn_aware_partition(H, Q, m, params['B'], train, train_mask,
+                                                    hidden=hidden, seed=seed, **solver, **aware)
+                elif method != 'grip':
                     partitioner = uniform_transport if method == 'transport' else risk_partition
                     condensed = partitioner(H, Q, m, params['B'], seed=seed, **solver)
                 else:
@@ -273,7 +287,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                        partition_seconds=condensed['seconds']).items():
                     trial.set_user_attr(key, value)
                 for key in ('status', 'mass_tv', 'row_residual', 'column_residual',
-                            'mass_correction', 'variance_term', 'correction_term', 'moment_term'):
+                            'mass_correction', 'variance_term', 'correction_term', 'moment_term',
+                            'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max'):
                     if key in condensed:
                         trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
@@ -324,6 +339,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             if method == 'corrected':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                     ('mass_tv', 'mass_correction', 'variance_term', 'correction_term', 'moment_term')})
+            if method == 'gcn_aware':
+                summaries[-1].update({k: best.user_attrs[k] for k in
+                    ('status', 'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max')})
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
         feature_cache.clear()

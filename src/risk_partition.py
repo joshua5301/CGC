@@ -89,7 +89,8 @@ def seed_partition(X, Q, m, B, generator, block_size):
 @torch.no_grad()
 def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                    atol=1e-12, rtol=1e-10, checkpoints=(), objective_mode='combined',
-                   initial_state=None, return_initial_state=False, verify_deltas=True):
+                   initial_state=None, return_initial_state=False, verify_deltas=True,
+                   return_assignment=False):
     if not 1 <= m <= len(H) or not math.isfinite(B) or B <= 0:
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
@@ -288,6 +289,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                       moment_term=beta * result['moment_error'])
     if return_initial_state:
         result['initial_state'] = saved_initial
+    if return_assignment:
+        result['assignment'] = assignment.cpu()
     if checkpoints:
         result['snapshots'] = snapshots
     return result

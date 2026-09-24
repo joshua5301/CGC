@@ -242,3 +242,51 @@ attributing a difference solely to weighting requires matching search settings o
 evaluating the same condensed artifact under both losses. Local verification was
 limited to syntax and diff checks, without model execution or smoke tests.
 
+## GCN-aware hard partition and label calibration
+
+`run_experiments(method="gcn_aware", aware={...})` refines an ordinary risk hard
+partition using frozen GCN probes and calibrated soft labels. Student loss must
+be uniform CE. The first stage uses init_sweeps risk sweeps (default 30); setting
+init_sweeps=0 starts from the existing D² initialization, never from GRIP.
+
+Each probe trains a two-layer GCN on original train labels for a fixed epoch count.
+Validation/test labels and scores are not used. With the first layer frozen,
+original hidden features are A ReLU(A X W0+b0), whereas synthetic features are
+ReLU(C W0+b0). Matching uses dropout-free forwards and includes the final bias via
+an appended constant. A regularized head is fitted to the original teacher Q with
+LBFGS. The reported head_stationarity_max diagnoses the finite head fit; it is
+not assumed to be an exact optimum. Probe seeds must differ from evaluation seeds.
+
+The objective is the mean squared Frobenius difference of last-layer CE gradients
+across probes, with ordinary uniform averaging on each dataset. The same head
+regularizer cancels in the gradient difference. Fixed-feature label calibration
+uses projected gradient descent on a convex quadratic with row-simplex constraints.
+An eigenvalue-based step bound and a Frank-Wolfe gap provide its stopping rule.
+label_converged and label_gap report whether the inner tolerance was attained.
+No KL or arbitrary label-anchor penalty is added.
+
+Partition proposals use the derivative of this actual objective with respect to
+centroids and the first-order effect of moving a node. Each batch is fully rescored
+with labels fixed, accepted only on a decrease, or recursively split. Label
+calibration is repeated after each round. This preserves nonempty cells and
+arithmetic feature means; labels are no longer forced to be cell means. Proposal
+scores are approximations, while acceptance scores are exact for the frozen-probe
+objective up to floating-point error. This is not exhaustive move enumeration.
+
+partition.max_sweeps controls refinement rounds; partition.block_size controls
+proposal batches. aware options include init_sweeps, probe_seeds ([1000,1001]),
+probe_epochs (100), probe_lr (.01), probe_dropout (.5), head_ridge (.001),
+head_steps (200), label_steps (1000), label_tolerance (1e-8), and proposal_nodes
+(8192). At most proposal_nodes random nodes are considered per round, against all
+destination cells. Increasing this to the dataset size considers all source nodes.
+A no-improvement round is proposal_stalled, not a local/global optimality certificate;
+converged remains false. The iteration cap is reported separately.
+
+J_initial/J_final now mean the gradient-matching objective, identified by
+objective_name; they cannot be compared numerically to earlier risk J. Artifacts
+store frozen probe states, head diagnostics, label gaps, objective history and final
+assignments. Final GCN training still starts from scratch on representative features
+and calibrated labels with uniform CE. No local training or smoke tests were run;
+only AST parsing and diff checks were performed. The theoretical claims and limits
+are in [the analysis](docs/gcn_aware_improvement_analysis.md).
+
