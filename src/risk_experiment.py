@@ -2,6 +2,7 @@ import gc
 import hashlib
 import json
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,7 @@ from src.dataloader import get_dataset
 from src.hyperparams import BEST_HYPERPARAMS_DICT
 from src.models import GCN
 from src.risk_partition import risk_partition
-from src.teacher import get_teacher_labels
+from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
 
 
@@ -111,9 +112,16 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
         raise ValueError('Require positive trial/epoch counts and nonempty evaluation seeds')
     if space is None:
-        space = dict(B=dict(low=0.01, high=100.0, log=True), dropout=[0.1, 0.5, 0.9])
-    if set(space) - {'B', 'dropout', 'lr', 'weight_decay'}:
-        raise ValueError('Search space supports B, dropout, lr, weight_decay')
+        space = dict(B=dict(low=0.01, high=100.0, log=True),
+                     teacher_kernel=['erf', 'relu'], gamma=[0.01, 0.1, 1.0],
+                     T=[0.2, 0.5, 1.0, 2.0], basis=[3000], dropout=[0.1, 0.5, 0.9])
+    teacher_keys = {'teacher_kernel', 'gamma', 'T', 'basis'}
+    if set(space) - teacher_keys - {'B', 'dropout', 'lr', 'weight_decay'}:
+        raise ValueError('Search supports B, teacher_kernel, gamma, T, basis, dropout, lr, weight_decay')
+    aliases = {'kernel': 'teacher_kernel', 'temperature': 'T'}
+    teacher = {aliases.get(k, k): v for k, v in (teacher or {}).items()}
+    if set(teacher) - teacher_keys:
+        raise ValueError('Unknown teacher setting')
     solver = dict(max_sweeps=30, block_size=1024, atol=1e-12, rtol=1e-10)
     solver.update(partition or {})
     settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden)
@@ -128,14 +136,40 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
 
     for name, ratios in datasets.items():
         train, train_mask, validation, testing, H = _prepare_dataset(name, data_dir, device)
-        teacher_cache = {}
+        teacher_cache = OrderedDict()
+        feature_cache = {}
+
+        def get_labels(params):
+            kernel, gamma, temperature, basis = (params[k] for k in
+                                                  ('teacher_kernel', 'gamma', 'T', 'basis'))
+            if gamma < 0 or temperature <= 0 or basis < 1 or int(basis) != basis:
+                raise ValueError('Require gamma >= 0, T > 0 and positive integer basis')
+            basis = int(basis)
+            key = (kernel, gamma, basis)
+            if key not in teacher_cache:
+                feature_key = (kernel, basis)
+                if feature_cache.get('key') != feature_key:
+                    feature_cache.clear()
+                    gc.collect()
+                    seed_everything(seed)
+                    feature_cache['features'] = get_kernel_features(H, kernel, basis)
+                    feature_cache['key'] = feature_key
+                features = feature_cache['features']
+                labels = F.one_hot(train['y'][train_mask], int(train['y'].max()) + 1)
+                W = fit_logistic(features[train_mask], labels.to(features.dtype), gamma)
+                teacher_cache[key] = (features @ W).detach().cpu()
+                if len(teacher_cache) > 4:
+                    teacher_cache.popitem(last=False)
+            teacher_cache.move_to_end(key)
+            return F.softmax(teacher_cache[key].to(device) / temperature, dim=1)
+
         for ratio in ratios:
             defaults = BEST_HYPERPARAMS_DICT[(name, ratio)]
             m = BUDGET[(name, ratio)]
-            teacher_config = dict(kernel=defaults[0], gamma=defaults[1],
-                                  temperature=defaults[2], basis=3000)
-            teacher_config.update(teacher or {})
-            protocol = dict(version=1, revision=revision, torch=str(torch.__version__),
+            teacher_config = dict(teacher_kernel=defaults[0], gamma=defaults[1],
+                                  T=defaults[2], basis=3000)
+            teacher_config.update(teacher)
+            protocol = dict(version=2, revision=revision, torch=str(torch.__version__),
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
                             teacher=teacher_config, seed=seed, partition=solver,
                             space=space, search_seeds=list(search_seeds),
@@ -148,20 +182,14 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 study_name='validation', storage=f'sqlite:///{case / "study.db"}',
                 direction='maximize', sampler=optuna.samplers.TPESampler(seed=seed),
                 pruner=optuna.pruners.NopPruner(), load_if_exists=True)
-            teacher_key = _fingerprint(teacher_config)
-
-            def get_condensed(B):
-                path = case / f'condensed_{_fingerprint(dict(B=float(B)))}.pt'
+            def get_condensed(params):
+                condensation_config = {k: params[k] for k in sorted(teacher_keys | {'B'})}
+                path = case / f'condensed_{_fingerprint(condensation_config)}.pt'
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
-                if teacher_key not in teacher_cache:
-                    seed_everything(seed)
-                    teacher_cache[teacher_key] = get_teacher_labels(
-                        H, train_mask, train['y'], teacher_config['kernel'],
-                        teacher_config['gamma'], teacher_config['temperature'],
-                        teacher_config['basis']).detach()
-                condensed = risk_partition(H, teacher_cache[teacher_key], m, B,
+                condensed = risk_partition(H, get_labels(params), m, params['B'],
                                            seed=seed, **solver)
+                condensed['config'] = condensation_config
                 temporary = path.with_suffix('.tmp')
                 torch.save(condensed, temporary)
                 temporary.replace(path)
@@ -170,13 +198,15 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
 
             def objective(trial):
                 params = dict(B=1.0, dropout=float(defaults[4].split(',')[0]),
-                              lr=lr, weight_decay=weight_decay)
+                              lr=lr, weight_decay=weight_decay, **teacher_config)
                 for key, specification in space.items():
                     if isinstance(specification, (list, tuple)):
                         params[key] = trial.suggest_categorical(key, list(specification))
+                    elif key == 'basis':
+                        params[key] = trial.suggest_int(key, **specification)
                     else:
                         params[key] = trial.suggest_float(key, **specification)
-                condensed, artifact = get_condensed(params['B'])
+                condensed, artifact = get_condensed(params)
                 cx, cy = condensed['x'].to(device), condensed['y'].to(device)
                 values = [_train_student(cx, cy, validation, params, s, settings)[0]
                           for s in search_seeds]
@@ -216,7 +246,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 temporary.replace(final_path)
                 del cx, cy
             summaries.append(dict(
-                dataset=name, ratio=ratio, nodes=m, B=params['B'], dropout=params['dropout'],
+                dataset=name, ratio=ratio, nodes=m, **params,
                 search_val=100 * best.value, final_val=100 * final['validation'].mean(),
                 test_mean=100 * final['test'].mean(),
                 test_std=100 * final['test'].std(ddof=1) if len(final) > 1 else 0.0,
@@ -225,6 +255,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 partition_seconds=best.user_attrs['partition_seconds'], folder=str(case)))
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
+        feature_cache.clear()
         del train, train_mask, validation, testing, H
         gc.collect()
         torch.cuda.empty_cache()

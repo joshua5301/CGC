@@ -36,27 +36,46 @@ sparse adjacency; the condensed graph has self-loops only. Optuna selects settin
 using validation results, and test is evaluated only for the selected settings.
 Final repeats vary the GCN seed on one fixed condensed dataset.
 
-After cloning the repository and preparing `/content/data/`, install `optuna` in
-the notebook, then call:
+After cloning the repository and preparing `/content/data/`, use one Colab cell:
 
 ```python
-from src.risk_experiment import run_experiments
+%cd /content/GRIP
+!git pull --ff-only origin main
+%pip -q install optuna
 
-results = run_experiments(
+import importlib
+import src.risk_experiment as experiment
+importlib.reload(experiment)
+
+results = experiment.run_experiments(
     datasets={"cora": [0.013, 0.026, 0.052]},
     output_dir="/content/drive/MyDrive/GRIP_results/risk_v1",
     space={"B": {"low": 0.01, "high": 100.0, "log": True},
-           "dropout": [0.1, 0.5, 0.9]},
-    n_trials=20,
+           "teacher_kernel": ["erf", "relu"],
+           "gamma": [0.01, 0.1, 1.0], "T": [0.2, 0.5, 1.0, 2.0],
+           "basis": [3000], "dropout": [0.1, 0.5, 0.9],
+           "lr": [0.01], "weight_decay": [5e-4]},
+    n_trials=100,
 )
 results
 ```
 
-Search parameters support categorical lists or `suggest_float` keyword dictionaries
-for `B`, `dropout`, `lr`, and `weight_decay`. `teacher` can override `kernel`,
-`gamma`, `temperature`, and `basis`; otherwise the existing dataset/ratio defaults
-are used. `partition` controls `max_sweeps`, `block_size`, `atol`, and `rtol`.
+Search parameters support categorical lists or Optuna range dictionaries for `B`,
+`teacher_kernel`, `gamma`, `T`, `basis`, `dropout`, `lr`, and `weight_decay`.
+Ranges use `suggest_int` for `basis` and `suggest_float` for numerical parameters
+other than `basis`. Use a categorical list for `teacher_kernel`.
+A one-element list fixes a setting. Keys omitted from `space` use the supplied
+defaults. `teacher` overrides `teacher_kernel`, `gamma`, `T`, and `basis`, with
+`kernel` and `temperature` accepted as aliases; a searched parameter takes
+precedence over this fixed default. Otherwise existing dataset/ratio defaults apply.
+`partition` controls `max_sweeps`, `block_size`, `atol`, and `rtol`.
 Dataset/ratio pairs use the existing `BUDGET` and `BEST_HYPERPARAMS_DICT` tables.
+
+Teacher logits are reused across temperatures. The cache keeps one kernel feature
+matrix on the GPU and up to four fitted logit matrices on the CPU per dataset.
+Condensed-cache keys include B and every teacher setting, so changing gamma or T
+cannot reuse a condensed dataset produced by another teacher configuration.
+Selected teacher and student settings are included in `best.json` and `summary.csv`.
 
 Each configuration stores its Optuna database, condensed tensors, best settings,
 and evaluation CSVs in a separate output directory. Increasing `n_trials` resumes
