@@ -19,13 +19,15 @@ def teacher_fisher(z, labels, train_mask, reference_probabilities, config, batch
         chol = torch.linalg.cholesky(gram + 1e-8 * gram.diagonal().mean() * eye)
         transform = torch.linalg.solve_triangular(chol, eye, upper=False).T
         features = kernel @ transform
-        targets = F.one_hot(labels[train_mask], reference_probabilities.shape[1]).double()
+        classes = reference_probabilities.shape[1] if reference_probabilities is not None else int(labels.max()) + 1
+        targets = F.one_hot(labels[train_mask], classes).double()
     head = fit_logistic(features[train_mask], targets, config['gamma'])
     with torch.no_grad():
         beta = (transform @ head).detach()
-        rebuilt = (features @ head / config['T']).softmax(1)
+        logits = features @ head
+        rebuilt = (logits / config['T']).softmax(1)
         folded = (kernel @ beta / config['T']).softmax(1)
-        source_error = float((rebuilt - reference_probabilities).abs().max())
+        source_error = float((rebuilt - reference_probabilities).abs().max()) if reference_probabilities is not None else 0.
         fold_error = float((rebuilt - folded).abs().max())
         if source_error > 1e-7 or fold_error > 1e-9:
             raise ValueError(f'Teacher reconstruction mismatch: source={source_error}, folded={fold_error}')
@@ -43,7 +45,8 @@ def teacher_fisher(z, labels, train_mask, reference_probabilities, config, batch
     score /= len(z)
     if not torch.isfinite(score).all() or float(score.mean()) <= 0:
         raise ValueError('Invalid teacher Fisher sensitivities')
-    return dict(score=score.cpu(), basis=basis.cpu(), beta=beta.cpu(),
+    return dict(score=score.cpu(), basis=basis.cpu(), beta=beta.cpu(), logits=logits.cpu(),
+                source_probability_checked=reference_probabilities is not None,
                 metric_temperature=METRIC_TEMPERATURE, label_temperature=config['T'],
                 source_probability_max_error=source_error,
                 folded_probability_max_error=fold_error,
