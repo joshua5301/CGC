@@ -4,6 +4,42 @@ import time
 import torch
 
 
+def _uniform_deltas(X, Q, ids, sources, counts, c, y, error, alpha, beta):
+    N, m = len(X), len(c)
+    xb, qb = X[ids], Q[ids] - 1 / Q.shape[1]
+    y = y - 1 / Q.shape[1]
+    na = counts[sources]
+    ca, ya = c[sources], y[sources]
+    denominator = (na - 1).clamp_min(1)[:, None]
+    next_ca = (na[:, None] * ca - xb) / denominator
+    next_ya = (na[:, None] * ya - qb) / denominator
+    removed = error[None, :, :] + (
+        ca[:, :, None] * ya[:, None, :] - next_ca[:, :, None] * next_ya[:, None, :]) / m
+    old_products = c[:, :, None] * y[:, None, :]
+    old_cross = removed.flatten(1) @ old_products.flatten(1).T
+    eq = torch.einsum('bdk,bk->bd', removed, qb)
+    xe = torch.einsum('bd,bdk->bk', xb, removed)
+    nb, denominator_b = counts[None, :], (counts + 1)[None, :]
+    new_cross = (nb.square() * old_cross + nb * (eq @ c.T + xe @ y.T)
+                 + (xe * qb).sum(1)[:, None]) / denominator_b.square()
+    c2, y2 = c.square().sum(1)[None, :], y.square().sum(1)[None, :]
+    x2, q2 = xb.square().sum(1)[:, None], qb.square().sum(1)[:, None]
+    xc, qy = xb @ c.T, qb @ y.T
+    next_c2 = (nb.square() * c2 + 2 * nb * xc + x2) / denominator_b.square()
+    next_y2 = (nb.square() * y2 + 2 * nb * qy + q2) / denominator_b.square()
+    cross_c, cross_y = (nb * c2 + xc) / denominator_b, (nb * y2 + qy) / denominator_b
+    change_norm2 = (c2 * y2 + next_c2 * next_y2 - 2 * cross_c * cross_y).clamp_min(0) / m ** 2
+    next_norm2 = (removed.square().sum((1, 2))[:, None]
+                  + 2 * (old_cross - new_cross) / m + change_norm2)
+    delta_v = (-na / (N * (na - 1).clamp_min(1)) * (xb - ca).square().sum(1))[:, None]
+    delta_v = delta_v + nb / (N * denominator_b) * (x2 + c2 - 2 * xc).clamp_min(0)
+    correction_a = (((na - 1) / N - 1 / m).abs() * next_ca.square().sum(1)
+                    - (na / N - 1 / m).abs() * ca.square().sum(1))
+    correction_b = ((nb + 1) / N - 1 / m).abs() * next_c2 - (nb / N - 1 / m).abs() * c2
+    return alpha * (delta_v + correction_a[:, None] + correction_b) + beta * (
+        next_norm2.clamp_min(0).sqrt() - error.norm())
+
+
 def seed_partition(X, Q, m, B, generator, block_size):
     N = len(X)
     if m == N:
@@ -53,13 +89,13 @@ def seed_partition(X, Q, m, B, generator, block_size):
 @torch.no_grad()
 def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                    atol=1e-12, rtol=1e-10, checkpoints=(), objective_mode='combined',
-                   initial_state=None, return_initial_state=False):
+                   initial_state=None, return_initial_state=False, verify_deltas=True):
     if not 1 <= m <= len(H) or not math.isfinite(B) or B <= 0:
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
         raise ValueError('Invalid partition solver settings')
-    if objective_mode not in ('combined', 'variance'):
-        raise ValueError('Require combined or variance objective')
+    if objective_mode not in ('combined', 'variance', 'uniform'):
+        raise ValueError('Require combined, variance or uniform objective')
 
     if H.is_cuda:
         torch.cuda.synchronize(H.device)
@@ -73,7 +109,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
 
     N, d = X.shape
     K = Q.shape[1]
-    alpha, beta = B * B / 4, 2 * B if objective_mode == 'combined' else 0.0
+    original_d = d
+    alpha, beta = B * B / 4, 0.0 if objective_mode == 'variance' else 2 * B
     generator = torch.Generator(device=X.device).manual_seed(seed)
     if initial_state is None:
         assignment = seed_partition(X, Q, m, B, generator, block_size)
@@ -86,8 +123,13 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         generator.set_state(initial_state['generator_state'].cpu())
     saved_initial = dict(assignment=assignment.cpu().clone(),
                          generator_state=generator.get_state()) if return_initial_state else None
+    if objective_mode == 'uniform':
+        X = torch.cat((X, X.new_ones(N, 1)), dim=1)
+        d = X.shape[1]
     x2, q2 = X.square().sum(1), Q.square().sum(1)
     energy, moment = x2.mean(), X.T @ Q / N
+    if objective_mode == 'uniform':
+        moment = X.T @ (Q - 1 / K) / N
 
     def aggregate():
         n = torch.bincount(assignment, minlength=m).double()
@@ -99,7 +141,11 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         c = s / n[:, None]
         error = moment - c.T @ r / N
         variance = (energy - (s * c).sum() / N).clamp_min(0)
-        value = float(alpha * variance + beta * error.norm())
+        correction = X.new_tensor(0.0)
+        if objective_mode == 'uniform':
+            error = moment - c.T @ (r / n[:, None] - 1 / K) / m
+            correction = ((n / N - 1 / m).abs() * c.square().sum(1)).sum()
+        value = float(alpha * (variance + correction) + beta * error.norm())
         if not math.isfinite(value):
             raise FloatingPointError('Nonfinite partition objective')
         return error, variance, value
@@ -110,7 +156,7 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
     snapshots = {}
 
     def snapshot(sweep):
-        return dict(x=((sums / counts[:, None]) * scale + offset).float().cpu(),
+        return dict(x=((sums[:, :original_d] / counts[:, None]) * scale + offset).float().cpu(),
                     y=(label_sums / counts[:, None]).float().cpu(),
                     counts=counts.long().cpu(), J=objective, V=float(variance),
                     moment_error=float(error.norm()), sweeps=sweep,
@@ -146,12 +192,40 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         right = apply_moves(ids[middle:], destinations[middle:])
         return left + right
 
-    converged = m in (1, N) or float(raw_scale) == 0
+    converged = m in (1, N) or (float(raw_scale) == 0 and objective_mode != 'uniform')
+    checked = False
     for _ in range(0 if converged else max_sweeps):
         moved = 0
         order = torch.randperm(N, generator=generator, device=X.device)
         for ids in order.split(block_size):
             c, y = sums / counts[:, None], label_sums / counts[:, None]
+            if objective_mode == 'uniform':
+                sources = assignment[ids]
+                delta = _uniform_deltas(X, Q, ids, sources, counts, c, y, error, alpha, beta)
+                if verify_deltas and not checked:
+                    eligible = torch.nonzero(counts[sources] > 1).flatten()[:4]
+                    for local in eligible.tolist():
+                        source = int(sources[local])
+                        target = (source + 1) % m
+                        node = ids[local]
+                        next_counts, next_sums, next_labels = counts.clone(), sums.clone(), label_sums.clone()
+                        next_counts[source] -= 1
+                        next_counts[target] += 1
+                        next_sums[source] -= X[node]
+                        next_sums[target] += X[node]
+                        next_labels[source] -= Q[node]
+                        next_labels[target] += Q[node]
+                        direct = score(next_counts, next_sums, next_labels)[2] - objective
+                        if abs(float(delta[local, target]) - direct) > 1e-8 * max(1.0, abs(objective)):
+                            raise FloatingPointError('Uniform move delta disagrees with full recomputation')
+                    checked = len(eligible) > 0
+                delta.scatter_(1, sources[:, None], torch.inf)
+                delta[counts[sources] <= 1] = torch.inf
+                best_delta, destinations = delta.min(1)
+                take = best_delta < -(atol + rtol * max(1.0, abs(objective)))
+                if bool(take.any()):
+                    moved += apply_moves(ids[take], destinations[take])
+                continue
             xb, qb = X[ids], Q[ids]
             sources = assignment[ids]
             ua, va = xb - c[sources], qb - y[sources]
@@ -196,7 +270,7 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
             converged = True
             break
 
-    result = dict(x=((sums / counts[:, None]) * scale + offset).float().cpu(),
+    result = dict(x=((sums[:, :original_d] / counts[:, None]) * scale + offset).float().cpu(),
                   y=(label_sums / counts[:, None]).float().cpu(),
                   counts=counts.long().cpu(), J=objective, V=float(variance),
                   moment_error=float(error.norm()), history=history,
@@ -205,6 +279,13 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
     result['seconds'] = time.perf_counter() - started
     result['objective_mode'] = objective_mode
     result['bound_J'] = B * B / 4 * result['V'] + 2 * B * result['moment_error']
+    if objective_mode == 'uniform':
+        correction = float(((counts / N - 1 / m).abs()
+                            * (sums / counts[:, None]).square().sum(1)).sum())
+        result.update(mass_correction=correction, bound_J=objective,
+                      mass_tv=float((counts / N - 1 / m).abs().sum() / 2),
+                      variance_term=alpha * result['V'], correction_term=alpha * correction,
+                      moment_term=beta * result['moment_error'])
     if return_initial_state:
         result['initial_state'] = saved_initial
     if checkpoints:

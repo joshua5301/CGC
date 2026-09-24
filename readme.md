@@ -207,3 +207,19 @@ settings and marginal diagnostics are saved in the standard condensed artifact.
 Evaluation remains two-layer GCN with uniform soft CE. Only syntax and diff checks
 were performed locally; run numerical and model evaluation in Colab.
 
+## Corrected uniform-CE hard partition
+
+`run_experiments(method="corrected")` retains variable-size hard cells and optimizes
+Ju=B²(V+C)/4+2B||Eu||. C is the size-weight mismatch weighted by squared augmented
+centroid norm; Eu uses uniform representative weights and class-centered labels.
+An appended constant coordinate accounts for affine logits and label-marginal
+error, and is removed from the output features. This is a bound-derived correction,
+not a free balance coefficient. See [the derivation](docs/uniform_ce_correction.md).
+
+The method shares initialization and the exact batch acceptance mechanism with
+risk partitioning. It adds no new sweep dimensions. Existing B, teacher and student
+settings may be fixed or searched through the same Optuna interface. Summary files
+include variance_term, correction_term, moment_term and mass_tv; the first three
+sum to J_final. The first few candidate move deltas are verified against complete
+objective recomputation at runtime in Colab. Local checks are syntax-only.
+

@@ -113,8 +113,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=()):
-    if method not in ('risk', 'grip', 'transport') or grip_steps < 1:
-        raise ValueError('Require risk, grip or transport and positive grip_steps')
+    if method not in ('risk', 'grip', 'transport', 'corrected') or grip_steps < 1:
+        raise ValueError('Require risk, grip, transport or corrected and positive grip_steps')
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
         raise ValueError('Require positive trial/epoch counts and nonempty evaluation seeds')
     if space is None:
@@ -134,6 +134,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         raise ValueError('Unknown teacher setting')
     solver = dict(max_sweeps=30, block_size=1024, atol=1e-12, rtol=1e-10)
     solver.update(partition or {})
+    if method == 'corrected':
+        solver['objective_mode'] = 'uniform'
     settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden)
     output_dir, device = Path(output_dir), torch.device(device)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -255,7 +257,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                        converged=condensed['converged'], sweeps=condensed['sweeps'],
                                        partition_seconds=condensed['seconds']).items():
                     trial.set_user_attr(key, value)
-                for key in ('status', 'mass_tv', 'row_residual', 'column_residual'):
+                for key in ('status', 'mass_tv', 'row_residual', 'column_residual',
+                            'mass_correction', 'variance_term', 'correction_term', 'moment_term'):
                     if key in condensed:
                         trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
@@ -302,6 +305,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             if method == 'transport':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                                       ('status', 'mass_tv', 'row_residual', 'column_residual')})
+            if method == 'corrected':
+                summaries[-1].update({k: best.user_attrs[k] for k in
+                    ('mass_tv', 'mass_correction', 'variance_term', 'correction_term', 'moment_term')})
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
         feature_cache.clear()
