@@ -174,3 +174,36 @@ use two-layer GCN and uniform CE, with no test evaluation or hyperparameter sear
 Interrupted student evaluations resume from saved rows. No local model execution
 or smoke tests were performed.
 
+## Uniform-mass transport condensation
+
+`run_experiments(method="transport")` uses `src.uniform_transport` instead of hard
+partition moves. The transport plan has row masses 1/N and column masses 1/m.
+Representatives are c=m Pi^T H and y=m Pi^T Q. Thus the mass-weighted representative
+loss in the linear-student derivation is exactly uniform CE. This addresses the
+mass mismatch; it does not establish a nonlinear GCN or test-risk guarantee.
+
+Initialization uses the existing bound-derived D² seeds, followed by a balanced
+transport solve with the joint feature/label distortion. Optimization linearizes
+J=B² V/4+2B||E|| and uses an entropy-regularized transport oracle followed by
+backtracking on the unregularized J. Costs are centered by rows and columns and
+RMS-scaled before Sinkhorn. Entropy epsilon controls the oracle, not an added term
+in J. Four attempts with progressively smaller epsilon are allowed by default.
+Sinkhorn output is rounded to the requested marginals by row/column downscaling
+and a residual outer product. Relative marginal errors are checked at 1e-7.
+Oracle histories include errors before rounding and the mass filled by rounding.
+
+`partition` accepts max_sweeps (outer updates), block_size (seed assignment),
+epsilon (default .05), sinkhorn_steps (200), sinkhorn_tolerance (1e-6),
+oracle_retries (4), line_steps (20), atol and rtol. A stalled approximate oracle
+does not certify stationarity: status is oracle_stalled or iteration_limit and
+converged remains false. J history records accepted decreases only. Diagnostics
+include mass_tv and relative row/column marginal errors. Counts are effective
+fractional masses N/m, not integer cluster memberships.
+
+The dense float64 plan costs 8Nm bytes; oracle workspaces require several such
+arrays. For arxiv at 454 representatives the plan alone is about 0.62 GB. The full
+plan is not written to Drive; representative tensors, objective/oracle histories,
+settings and marginal diagnostics are saved in the standard condensed artifact.
+Evaluation remains two-layer GCN with uniform soft CE. Only syntax and diff checks
+were performed locally; run numerical and model evaluation in Colab.
+

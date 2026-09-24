@@ -20,6 +20,7 @@ from src.hyperparams import BEST_HYPERPARAMS_DICT
 from src.models import GCN
 from src.partition import partition as grip_partition
 from src.risk_partition import risk_partition
+from src.uniform_transport import uniform_transport
 from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
 
@@ -112,8 +113,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=()):
-    if method not in ('risk', 'grip') or grip_steps < 1:
-        raise ValueError('Require risk or grip and positive grip_steps')
+    if method not in ('risk', 'grip', 'transport') or grip_steps < 1:
+        raise ValueError('Require risk, grip or transport and positive grip_steps')
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
         raise ValueError('Require positive trial/epoch counts and nonempty evaluation seeds')
     if space is None:
@@ -124,7 +125,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             space.pop('B')
             space['kl_weight'] = dict(low=0.01, high=10.0, log=True)
     teacher_keys = {'teacher_kernel', 'gamma', 'T', 'basis'}
-    coefficient = 'B' if method == 'risk' else 'kl_weight'
+    coefficient = 'kl_weight' if method == 'grip' else 'B'
     if set(space) - teacher_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
         raise ValueError(f'Unsupported search parameter for {method}')
     aliases = {'kernel': 'teacher_kernel', 'temperature': 'T'}
@@ -211,8 +212,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
                 Q = get_labels(params)
-                if method == 'risk':
-                    condensed = risk_partition(H, Q, m, params['B'], seed=seed, **solver)
+                if method != 'grip':
+                    partitioner = uniform_transport if method == 'transport' else risk_partition
+                    condensed = partitioner(H, Q, m, params['B'], seed=seed, **solver)
                 else:
                     seed_everything(seed)
                     if H.is_cuda:
@@ -235,7 +237,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             def objective(trial):
                 params = dict(dropout=float(defaults[4].split(',')[0]),
                               lr=lr, weight_decay=weight_decay, **teacher_config)
-                params[coefficient] = 1.0 if method == 'risk' else 0.5
+                params[coefficient] = 0.5 if method == 'grip' else 1.0
                 for key, specification in space.items():
                     if isinstance(specification, (list, tuple)):
                         params[key] = trial.suggest_categorical(key, list(specification))
@@ -253,6 +255,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                        converged=condensed['converged'], sweeps=condensed['sweeps'],
                                        partition_seconds=condensed['seconds']).items():
                     trial.set_user_attr(key, value)
+                for key in ('status', 'mass_tv', 'row_residual', 'column_residual'):
+                    if key in condensed:
+                        trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
 
             completed = sum(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
@@ -294,6 +299,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 J_initial=best.user_attrs['J_initial'], J_final=best.user_attrs['J_final'],
                 converged=best.user_attrs['converged'], sweeps=best.user_attrs['sweeps'],
                 partition_seconds=best.user_attrs['partition_seconds'], folder=str(case)))
+            if method == 'transport':
+                summaries[-1].update({k: best.user_attrs[k] for k in
+                                      ('status', 'mass_tv', 'row_residual', 'column_residual')})
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
         feature_cache.clear()
