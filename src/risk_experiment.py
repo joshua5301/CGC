@@ -2,6 +2,7 @@ import gc
 import hashlib
 import json
 import subprocess
+import time
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from torch_geometric.nn.conv.gcn_conv import gcn_norm
 from src.dataloader import get_dataset
 from src.hyperparams import BEST_HYPERPARAMS_DICT
 from src.models import GCN
+from src.partition import partition as grip_partition
 from src.risk_partition import risk_partition
 from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
@@ -108,16 +110,23 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     data_dir='/content/data/', search_seeds=(0, 1, 2),
                     final_seeds=tuple(range(100, 110)), partition=None, teacher=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
-                    lr=0.01, weight_decay=5e-4, device='cuda'):
+                    lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
+                    grip_steps=300, evaluate_test=True, initial_configs=()):
+    if method not in ('risk', 'grip') or grip_steps < 1:
+        raise ValueError('Require risk or grip and positive grip_steps')
     if n_trials < 1 or not search_seeds or not final_seeds or min(epochs, eval_every) < 1:
         raise ValueError('Require positive trial/epoch counts and nonempty evaluation seeds')
     if space is None:
         space = dict(B=dict(low=0.01, high=100.0, log=True),
                      teacher_kernel=['erf', 'relu'], gamma=[0.01, 0.1, 1.0],
                      T=[0.2, 0.5, 1.0, 2.0], basis=[3000], dropout=[0.1, 0.5, 0.9])
+        if method == 'grip':
+            space.pop('B')
+            space['kl_weight'] = dict(low=0.01, high=10.0, log=True)
     teacher_keys = {'teacher_kernel', 'gamma', 'T', 'basis'}
-    if set(space) - teacher_keys - {'B', 'dropout', 'lr', 'weight_decay'}:
-        raise ValueError('Search supports B, teacher_kernel, gamma, T, basis, dropout, lr, weight_decay')
+    coefficient = 'B' if method == 'risk' else 'kl_weight'
+    if set(space) - teacher_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
+        raise ValueError(f'Unsupported search parameter for {method}')
     aliases = {'kernel': 'teacher_kernel', 'temperature': 'T'}
     teacher = {aliases.get(k, k): v for k, v in (teacher or {}).items()}
     if set(teacher) - teacher_keys:
@@ -169,7 +178,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             teacher_config = dict(teacher_kernel=defaults[0], gamma=defaults[1],
                                   T=defaults[2], basis=3000)
             teacher_config.update(teacher)
-            protocol = dict(version=2, revision=revision, torch=str(torch.__version__),
+            protocol = dict(version=3, revision=revision, torch=str(torch.__version__),
+                            method=method, grip_steps=grip_steps, evaluate_test=evaluate_test,
+                            initial_configs=initial_configs,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
                             teacher=teacher_config, seed=seed, partition=solver,
                             space=space, search_seeds=list(search_seeds),
@@ -182,13 +193,38 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 study_name='validation', storage=f'sqlite:///{case / "study.db"}',
                 direction='maximize', sampler=optuna.samplers.TPESampler(seed=seed),
                 pruner=optuna.pruners.NopPruner(), load_if_exists=True)
+            if not study.trials:
+                for candidate in initial_configs:
+                    if candidate['dataset'] == name and candidate['ratio'] == ratio:
+                        for key, value in candidate['params'].items():
+                            if key not in space:
+                                raise ValueError(f'Initial parameter {key} is outside the search space')
+                            specification = space[key]
+                            valid = (value in specification if isinstance(specification, (list, tuple))
+                                     else specification['low'] <= value <= specification['high'])
+                            if not valid:
+                                raise ValueError(f'Initial {key}={value} is outside the search space')
+                        study.enqueue_trial(candidate['params'])
             def get_condensed(params):
-                condensation_config = {k: params[k] for k in sorted(teacher_keys | {'B'})}
+                condensation_config = {k: params[k] for k in sorted(teacher_keys | {coefficient})}
                 path = case / f'condensed_{_fingerprint(condensation_config)}.pt'
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
-                condensed = risk_partition(H, get_labels(params), m, params['B'],
-                                           seed=seed, **solver)
+                Q = get_labels(params)
+                if method == 'risk':
+                    condensed = risk_partition(H, Q, m, params['B'], seed=seed, **solver)
+                else:
+                    seed_everything(seed)
+                    if H.is_cuda:
+                        torch.cuda.synchronize(device)
+                    started = time.perf_counter()
+                    x, y, assignment, converged = grip_partition(
+                        H, Q, m, kl_weight=params['kl_weight'], iters=grip_steps,
+                        return_state=True, seed=seed)
+                    condensed = dict(x=x.float().cpu(), y=y.float().cpu(),
+                                     counts=torch.bincount(assignment).cpu(),
+                                     converged=converged, J=None, history=[None], sweeps=None)
+                    condensed['seconds'] = time.perf_counter() - started
                 condensed['config'] = condensation_config
                 temporary = path.with_suffix('.tmp')
                 torch.save(condensed, temporary)
@@ -197,8 +233,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 return condensed, path.name
 
             def objective(trial):
-                params = dict(B=1.0, dropout=float(defaults[4].split(',')[0]),
+                params = dict(dropout=float(defaults[4].split(',')[0]),
                               lr=lr, weight_decay=weight_decay, **teacher_config)
+                params[coefficient] = 1.0 if method == 'risk' else 0.5
                 for key, specification in space.items():
                     if isinstance(specification, (list, tuple)):
                         params[key] = trial.suggest_categorical(key, list(specification))
@@ -211,6 +248,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 values = [_train_student(cx, cy, validation, params, s, settings)[0]
                           for s in search_seeds]
                 for key, value in dict(config=params, artifact=artifact, validation_runs=values,
+                                       nodes=len(condensed['x']),
                                        J_initial=condensed['history'][0], J_final=condensed['J'],
                                        converged=condensed['converged'], sweeps=condensed['sweeps'],
                                        partition_seconds=condensed['seconds']).items():
@@ -238,16 +276,19 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 records = []
                 for s in final_seeds:
                     val, test, epoch = _train_student(cx, cy, validation, params, s,
-                                                     settings, testing)
-                    records.append(dict(seed=s, validation=val, test=test, best_epoch=epoch))
+                                                     settings, testing if evaluate_test else None)
+                    records.append(dict(seed=s, validation=val,
+                                        test=test if test is not None else np.nan, best_epoch=epoch))
                 final = pd.DataFrame(records)
                 temporary = final_path.with_suffix('.tmp')
                 final.to_csv(temporary, index=False)
                 temporary.replace(final_path)
                 del cx, cy
             summaries.append(dict(
-                dataset=name, ratio=ratio, nodes=m, **params,
+                dataset=name, ratio=ratio, method=method, nodes=best.user_attrs['nodes'],
+                requested_nodes=m, **params,
                 search_val=100 * best.value, final_val=100 * final['validation'].mean(),
+                final_val_std=100 * final['validation'].std(ddof=1) if len(final) > 1 else 0.0,
                 test_mean=100 * final['test'].mean(),
                 test_std=100 * final['test'].std(ddof=1) if len(final) > 1 else 0.0,
                 J_initial=best.user_attrs['J_initial'], J_final=best.user_attrs['J_final'],

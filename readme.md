@@ -118,3 +118,32 @@ weights describes a possible objective/evaluation mismatch, not its causal effec
 Timing excludes teacher training and includes checkpoint copying; CUDA work is
 synchronized before partition timing starts. No local training or smoke tests were run.
 
+## Independent tuning and crossed settings
+
+`src.method_comparison.compare_methods` runs separate Optuna TPE studies for risk
+and GRIP with equal trial counts and identical common search spaces, search GCN
+seeds, and training schedules. Common parameters are teacher_kernel, gamma, T,
+basis, dropout, lr and weight_decay. Method-specific spaces contain B for risk
+and kl_weight for GRIP. Search and final GCN seeds must be disjoint. All evaluation
+uses two-layer GCN and uniform soft CE; this API never evaluates test accuracy.
+
+The selected teacher/student settings from each study are crossed with both
+partition methods. Each method retains its own selected B or kl_weight across
+the two settings. Crossed configurations are fixed, with no extra tuning or
+selection. Solver caps are identical between search and crossed evaluation;
+convergence and actual condensed node counts are reported. Equal trials do not
+imply equal wall time or guarantee either global hyperparameter optimum.
+
+`tuned.csv` stores independently selected settings, `cross.csv` the four
+method/settings combinations, `cross_runs.csv` paired GCN runs, and `paired.csv`
+risk-minus-GRIP validation differences in percentage points with conditional
+Student-t 95% intervals. Intervals cover GCN seed variability at one fixed
+partition seed, not data splits, partition variability or selection uncertainty.
+Validation is reused for tuning; new GCN seeds do not make it held-out data.
+
+`initial_configs` optionally maps risk/grip to lists of dictionaries containing
+dataset, ratio and params. Known good settings can be enqueued within the search
+space and count toward the same trial budget. Missing parameters are sampled.
+Increasing n_trials resumes the stored studies; changing the revision or protocol
+creates separate caches. No local training or smoke tests were run.
+
