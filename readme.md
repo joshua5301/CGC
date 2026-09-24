@@ -86,3 +86,35 @@ The linear-student, mass-weighted-CE bound does not certify this GCN evaluation.
 The implementation has only been statically checked locally, not executed or
 smoke-tested. See [the derivation and design](docs/risk_bound_partition_design.md).
 
+## Controlled partition ablation
+
+`src.risk_analysis.run_ablation` accepts a previous `summary.csv` path or a
+DataFrame containing dataset, ratio, B, teacher_kernel, gamma, T, basis, dropout,
+lr and weight_decay. It freezes these settings; this diagnostic does not run
+another hyperparameter search. Risk checkpoints share one optimization trajectory
+per partition seed. `risk_terminal` means the final state at convergence or the
+specified sweep cap; inspect `converged` before calling it converged. A requested
+checkpoint after convergence reuses the converged state and reports its actual sweep.
+
+The optional GRIP comparator uses the same teacher and student configuration with
+explicit `kl_weight` and `grip_steps`. It is a controlled comparator, not a separately
+tuned benchmark. FAISS initialization now accepts a seed; existing callers retain
+the original default 1234. GRIP may remove empty cells, so actual node counts are
+reported. Its different objective is not labeled as risk J.
+
+All students use two-layer GCN and uniform soft CE. Defaults use new student seeds
+200–209 and validation only. `evaluate_test=True` explicitly enables test evaluation
+at each seed's best validation checkpoint; diagnostic checkpoint selection should
+remain validation-only. Existing configurations were selected for the original
+method, so this is a conditional ablation, not an unbiased algorithm ranking.
+
+Outputs include resumable per-case runs and artifacts, aggregate `runs.csv`,
+`history.csv`, `summary.csv`, `paired.csv`, and PNG figures. Paired differences are
+in validation percentage points with Student-t 95% intervals across GCN seeds,
+computed separately for each partition seed. These conditional intervals do not
+measure dataset uncertainty and have no multiple-comparison correction. Figure
+error bars show seed standard deviations. Cell mass total variation against uniform
+weights describes a possible objective/evaluation mismatch, not its causal effect.
+Timing excludes teacher training and includes checkpoint copying; CUDA work is
+synchronized before partition timing starts. No local training or smoke tests were run.
+

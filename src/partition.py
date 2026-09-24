@@ -3,10 +3,11 @@ import torch
 
 EPS = 1e-12
 
-def kmeans_init(X: torch.Tensor, cluster_num: int):
+def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234):
     X_np = X.detach().cpu().numpy().astype('float32')
     kmeans = faiss.Kmeans(X_np.shape[1], cluster_num, gpu=False)
     kmeans.cp.min_points_per_centroid = 1
+    kmeans.cp.seed = seed
     kmeans.train(X_np)
     _, assign = kmeans.index.search(X_np, 1)
     return torch.from_numpy(assign.flatten()).long().to(X.device)
@@ -25,9 +26,9 @@ def cell_means(y_pred: torch.Tensor, assign: torch.Tensor, cluster_num: int):
     counts = torch.bincount(assign, minlength=cluster_num).clamp(min=1).to(y_pred.dtype)
     return torch.zeros(cluster_num, y_pred.shape[1], dtype=y_pred.dtype, device=y_pred.device).index_add_(0, assign, y_pred) / counts.unsqueeze(1)
 
-def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False):
+def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234):
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
-    assign = kmeans_init(X, cluster_num)
+    assign = kmeans_init(X, cluster_num, seed=seed)
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
 
     global_center = geometric_medians(X, torch.zeros(len(X), dtype=torch.long, device=X.device), 1)

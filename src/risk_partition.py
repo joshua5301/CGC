@@ -52,12 +52,14 @@ def seed_partition(X, Q, m, B, generator, block_size):
 
 @torch.no_grad()
 def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
-                   atol=1e-12, rtol=1e-10):
+                   atol=1e-12, rtol=1e-10, checkpoints=()):
     if not 1 <= m <= len(H) or not math.isfinite(B) or B <= 0:
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
         raise ValueError('Invalid partition solver settings')
 
+    if H.is_cuda:
+        torch.cuda.synchronize(H.device)
     started = time.perf_counter()
     X, Q = H.detach().double(), Q.detach().double()
     offset = X.mean(0)
@@ -92,6 +94,17 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
     counts, sums, label_sums = aggregate()
     error, variance, objective = score(counts, sums, label_sums)
     history, moves_history = [objective], []
+    snapshots = {}
+
+    def snapshot(sweep):
+        return dict(x=((sums / counts[:, None]) * scale + offset).float().cpu(),
+                    y=(label_sums / counts[:, None]).float().cpu(),
+                    counts=counts.long().cpu(), J=objective, V=float(variance),
+                    moment_error=float(error.norm()), sweeps=sweep,
+                    seconds=time.perf_counter() - started)
+
+    if 0 in checkpoints:
+        snapshots[0] = snapshot(0)
 
     def apply_moves(ids, destinations):
         nonlocal counts, sums, label_sums, error, variance, objective
@@ -164,6 +177,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
             raise FloatingPointError('Partition objective increased')
         history.append(objective)
         moves_history.append(moved)
+        if len(moves_history) in checkpoints:
+            snapshots[len(moves_history)] = snapshot(len(moves_history))
         if moved == 0:
             converged = True
             break
@@ -175,4 +190,6 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                   moves=moves_history, sweeps=len(moves_history),
                   converged=converged, B=float(B), seed=int(seed))
     result['seconds'] = time.perf_counter() - started
+    if checkpoints:
+        result['snapshots'] = snapshots
     return result
