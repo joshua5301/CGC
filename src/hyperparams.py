@@ -19,9 +19,15 @@ def get_hyperparams():
     parser.add_argument('--T', type=float, default=None, help='label smoothing/sharpening temperature')
     parser.add_argument('--kl_weight', type=float, default=None, help='weight of label KL loss during clustering')
     parser.add_argument('--basis', type=int, default=3000, help='basis number for teacher kernel')
+    parser.add_argument('--metric_alpha', type=float, default=0.0)
+    parser.add_argument('--metric_pairs', type=int, default=4096)
+    parser.add_argument('--metric_ridge', type=float, default=1e-3)
+    parser.add_argument('--metric_steps', type=int, default=300)
     parser.add_argument('--gammas', type=str, default='0.0001,0.001,0.01,0.1,1', help='diagnostics: comma list of gamma values')
 
     args = parser.parse_args()
+    if not 0 <= args.metric_alpha < 1 or args.metric_pairs < 1 or args.metric_ridge <= 0 or args.metric_steps < 1:
+        parser.error('invalid label metric parameters')
     return args
 
 BEST_HYPERPARAMS_DICT = {

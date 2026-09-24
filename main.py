@@ -5,6 +5,7 @@ from src.module import *
 from src.dataloader import *
 from src.teacher import get_teacher_labels
 from src.partition import partition
+from src.metric import label_scale
 
 args = get_hyperparams()
 args = device_setting(args)
@@ -27,7 +28,13 @@ X = H2
 y_pred = get_teacher_labels(X, data.train_mask, data.y, args.teacher_kernel, args.gamma, args.T, args.basis)
 if data_val is None:
     print(f'teacher test acc: {100 * (y_pred.argmax(1)[data.test_mask] == data.y[data.test_mask]).double().mean():.2f}%')
-X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
+if args.metric_alpha > 0:
+    scale = label_scale(X, y_pred, args.metric_alpha, args.metric_pairs,
+                        args.metric_ridge, args.metric_steps, args.seed)
+    X_cond, y_cond = partition(X * scale, y_pred, budget_node_num, args.kl_weight)
+    X_cond = X_cond / scale
+else:
+    X_cond, y_cond = partition(X, y_pred, budget_node_num, args.kl_weight)
 X_cond, y_cond = X_cond.float(), y_cond.float()
 all_node_num = len(X_cond)
 graph = Data(x=X_cond, y=y_cond, edge_index=torch.eye(all_node_num).nonzero().t().to(X_cond.device),
