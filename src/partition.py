@@ -68,8 +68,16 @@ def cell_means(y_pred: torch.Tensor, assign: torch.Tensor, cluster_num: int):
     counts = torch.bincount(assign, minlength=cluster_num).clamp(min=1).to(y_pred.dtype)
     return torch.zeros(cluster_num, y_pred.shape[1], dtype=y_pred.dtype, device=y_pred.device).index_add_(0, assign, y_pred) / counts.unsqueeze(1)
 
+
+@torch.no_grad()
+def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_weight):
+    feature = float((X - centers[assignment]).norm(dim=1).mean() / dist_scale)
+    kl = float((Q * (Q.clamp_min(EPS).log() - labels[assignment].clamp_min(EPS).log())).sum(1).mean() / kl_scale)
+    return dict(feature=feature, kl=kl, weighted_kl=kl_weight * kl, J=feature + kl_weight * kl)
+
+
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
-              init='kmeans', init_block_size=256):
+              init='kmeans', init_block_size=256, return_diagnostics=False):
     if init not in ('kmeans', 'kmeans++', 'greedy') or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
@@ -82,6 +90,11 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     assign = (kmeans_init(X, cluster_num, seed=seed, plus_plus=init == 'kmeans++') if init != 'greedy' else
               greedy_init(X, y_pred, cluster_num, kl_weight, dist_scale, kl_scale, init_block_size))
     centers = geometric_medians(X, assign, cluster_num)
+    if return_diagnostics:
+        means = cell_means(X, assign, cluster_num)
+        initial_sse = float((X - means[assign]).square().sum(1).mean())
+        initial = partition_cost(X, y_pred, assign, centers,
+                                 cell_means(y_pred, assign, cluster_num), dist_scale, kl_scale, kl_weight)
     for _ in range(iters):
         labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
         costs = []
@@ -101,6 +114,15 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     assign = remap[assign]
     X_cond = centers[keep]
     y_cond = cell_means(y_pred, assign, int(keep.sum()))
+    if return_diagnostics:
+        final = partition_cost(X, y_pred, assign, X_cond, y_cond, dist_scale, kl_scale, kl_weight)
+        return dict(x=X_cond.float().cpu(), y=y_cond.float().cpu(),
+                    counts=torch.bincount(assign).cpu(), assignment=assign.cpu(),
+                    nodes=len(X_cond), initial_sse=initial_sse,
+                    **{f'initial_{k}': v for k, v in initial.items()},
+                    **{f'final_{k}': v for k, v in final.items()},
+                    dist_scale=float(dist_scale), kl_scale=float(kl_scale),
+                    converged=moved == 0)
     if return_state:
         return X_cond, y_cond, assign, moved == 0
     return X_cond, y_cond

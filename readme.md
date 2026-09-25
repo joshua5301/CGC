@@ -324,6 +324,11 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+`src.initialization_study.run_initialization_study` compares random selection,
+minimum feature SSE, and minimum final GRIP cost across multiple initializations.
+It saves cost diagnostics and separate discovery/confirmation validation runs.
+See [study protocol](docs/initialization_selection_study.md).
+
 `grip_init='kmeans++'` selects feature-space centers with vanilla D-squared
 sampling (`sklearn.cluster.kmeans_plusplus`, `n_local_trials=1`), then supplies
 them to the same FAISS K-means training used by `kmeans`. FAISS iteration and
