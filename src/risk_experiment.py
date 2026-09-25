@@ -25,6 +25,7 @@ from src.gcn_aware import gcn_aware_partition
 from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
 from src.grid_search import GridStudy
+from src.grip_distance import distance_weights, training_support_distance
 
 
 def _fingerprint(value):
@@ -143,8 +144,10 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         raise ValueError('Invalid GRIP initialization settings')
     if loss_weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
-    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware', 'risk_fro') or grip_steps < 1:
+    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware', 'risk_fro', 'grip_distance') or grip_steps < 1:
         raise ValueError('Unknown method or invalid grip_steps')
+    if method == 'grip_distance' and (grip_init == 'greedy' or loss_weighting != 'uniform'):
+        raise ValueError('Distance GRIP requires feature-only initialization and uniform CE')
     aware = dict(aware or {})
     if method == 'gcn_aware':
         if loss_weighting != 'uniform':
@@ -157,12 +160,13 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         space = dict(B=dict(low=0.01, high=100.0, log=True),
                      teacher_kernel=['erf', 'relu'], gamma=[0.01, 0.1, 1.0],
                      T=[0.2, 0.5, 1.0, 2.0], basis=[3000], dropout=[0.1, 0.5, 0.9])
-        if method == 'grip':
+        if method in ('grip', 'grip_distance'):
             space.pop('B')
             space['kl_weight'] = dict(low=0.01, high=10.0, log=True)
     teacher_keys = {'teacher_kernel', 'gamma', 'T', 'basis'}
-    coefficient = 'kl_weight' if method == 'grip' else 'B'
-    if set(space) - teacher_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
+    coefficient = 'kl_weight' if method in ('grip', 'grip_distance') else 'B'
+    distance_keys = {'distance_k', 'distance_power'} if method == 'grip_distance' else set()
+    if set(space) - teacher_keys - distance_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
         raise ValueError(f'Unsupported search parameter for {method}')
     aliases = {'kernel': 'teacher_kernel', 'temperature': 'T'}
     teacher = {aliases.get(k, k): v for k, v in (teacher or {}).items()}
@@ -190,6 +194,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         train, train_mask, validation, testing, H = _prepare_dataset(name, data_dir, device)
         teacher_cache = OrderedDict()
         feature_cache = {}
+        distance_cache = {}
 
         def get_labels(params):
             kernel, gamma, temperature, basis = (params[k] for k in
@@ -253,7 +258,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                 raise ValueError(f'Initial {key}={value} is outside the search space')
                         study.enqueue_trial(candidate['params'])
             def get_condensed(params):
-                condensation_config = {k: params[k] for k in sorted(teacher_keys | {coefficient})}
+                condensation_config = {k: params[k] for k in sorted(teacher_keys | {coefficient} | distance_keys)}
                 path = case / f'condensed_{_fingerprint(condensation_config)}.pt'
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
@@ -263,7 +268,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     gc.collect()
                     condensed = gcn_aware_partition(H, Q, m, params['B'], train, train_mask,
                                                     hidden=hidden, seed=seed, **solver, **aware)
-                elif method != 'grip':
+                elif method not in ('grip', 'grip_distance'):
                     partitioner = uniform_transport if method == 'transport' else risk_partition
                     condensed = partitioner(H, Q, m, params['B'], seed=seed, **solver)
                 else:
@@ -271,10 +276,16 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     if H.is_cuda:
                         torch.cuda.synchronize(device)
                     started = time.perf_counter()
+                    label_weights = None
+                    if method == 'grip_distance' and params['distance_power'] != 0:
+                        k = params['distance_k']
+                        if k not in distance_cache:
+                            distance_cache[k] = training_support_distance(H, train_mask, k)
+                        label_weights = distance_weights(distance_cache[k], params['distance_power'])
                     x, y, assignment, converged = grip_partition(
                         H, Q, m, kl_weight=params['kl_weight'], iters=grip_steps,
                         return_state=True, seed=grip_seed, init=grip_init,
-                        init_block_size=grip_init_block_size)
+                        init_block_size=grip_init_block_size, label_weights=label_weights)
                     condensed = dict(x=x.float().cpu(), y=y.float().cpu(),
                                      counts=torch.bincount(assignment).cpu(),
                                      converged=converged, J=None, history=[None], sweeps=None)
@@ -289,7 +300,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             def objective(trial):
                 params = dict(dropout=float(defaults[4].split(',')[0]),
                               lr=lr, weight_decay=weight_decay, **teacher_config)
-                params[coefficient] = 0.5 if method == 'grip' else 1.0
+                params[coefficient] = 0.5 if method in ('grip', 'grip_distance') else 1.0
+                if method == 'grip_distance':
+                    params.update(distance_k=10, distance_power=1.)
                 for key, specification in space.items():
                     if isinstance(specification, (list, tuple)):
                         params[key] = trial.suggest_categorical(key, list(specification))
@@ -359,7 +372,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 J_initial=best.user_attrs['J_initial'], J_final=best.user_attrs['J_final'],
                 converged=best.user_attrs['converged'], sweeps=best.user_attrs['sweeps'],
                 partition_seconds=best.user_attrs['partition_seconds'], folder=str(case)))
-            if method == 'grip':
+            if method in ('grip', 'grip_distance'):
                 summaries[-1]['grip_init'] = grip_init
                 summaries[-1]['grip_seed'] = grip_seed
             if method == 'transport':
@@ -378,6 +391,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
         feature_cache.clear()
+        distance_cache.clear()
         del train, train_mask, validation, testing, H
         gc.collect()
         torch.cuda.empty_cache()

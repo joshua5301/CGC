@@ -406,3 +406,9 @@ and normalization. Include `alpha=0` to allow selection of the original GRIP.
 `src.grip_mixture_study.run_mixture_study` compares original GRIP, rounded-label
 GRIP, and a multinomial contamination model with full mixture-cost assignments
 and posterior-weighted representative labels. See [model and protocol](docs/grip_mixture.md).
+
+### Heuristic distance GRIP
+
+Use `run_experiments(method="grip_distance", search="grid")` with `distance_k`
+and `distance_power` alongside the full teacher/student grid. No validation labels
+are used to estimate weights. See [protocol](docs/grip_distance.md).
