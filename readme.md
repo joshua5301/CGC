@@ -324,6 +324,10 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+Original Risk supports `partition={'init': 'split'}` in `run_experiments`.
+Use `src.risk_initialization_study.compare_risk_initializations` for a paired
+comparison with the existing initializer; see [protocol](docs/risk_split_initialization.md).
+
 Paired feature initialization experiments support `uniform_kmeans`,
 `uniform_kmedians`, `distance_kmeans`, and `distance_kmedians`.
 See [paired K-medians protocol](docs/kmedians_initialization.md).

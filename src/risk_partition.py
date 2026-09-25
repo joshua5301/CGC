@@ -2,6 +2,7 @@ import math
 import time
 
 import torch
+from src.risk_split import split_partition
 
 
 def _uniform_deltas(X, Q, ids, sources, counts, c, y, error, alpha, beta):
@@ -90,7 +91,12 @@ def seed_partition(X, Q, m, B, generator, block_size):
 def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                    atol=1e-12, rtol=1e-10, checkpoints=(), objective_mode='combined',
                    initial_state=None, return_initial_state=False, verify_deltas=True,
-                   return_assignment=False):
+                   return_assignment=False, init='surrogate', split_random_directions=2,
+                   move_seed=None):
+    if init not in ('surrogate', 'split') or split_random_directions < 0:
+        raise ValueError('Invalid Risk initialization')
+    if init == 'split' and objective_mode != 'combined':
+        raise ValueError('Risk splitting requires the original combined objective')
     if not 1 <= m <= len(H) or not math.isfinite(B) or B <= 0:
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
@@ -113,8 +119,12 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
     original_d = d
     alpha, beta = B * B / 4, 0.0 if objective_mode == 'variance' else 2 * B
     generator = torch.Generator(device=X.device).manual_seed(seed)
+    initialization_info = {}
     if initial_state is None:
-        assignment = seed_partition(X, Q, m, B, generator, block_size)
+        if init == 'split':
+            assignment, initialization_info = split_partition(X, Q, m, B, generator, split_random_directions)
+        else:
+            assignment = seed_partition(X, Q, m, B, generator, block_size)
     else:
         assignment = initial_state['assignment'].to(device=X.device, dtype=torch.long).clone()
         if assignment.shape != (N,) or int(assignment.min()) < 0 or int(assignment.max()) >= m:
@@ -122,8 +132,13 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         if bool((torch.bincount(assignment, minlength=m) == 0).any()):
             raise ValueError('Initial partition must have no empty cells')
         generator.set_state(initial_state['generator_state'].cpu())
+    if move_seed is not None:
+        generator.manual_seed(move_seed)
     saved_initial = dict(assignment=assignment.cpu().clone(),
                          generator_state=generator.get_state()) if return_initial_state else None
+    if H.is_cuda:
+        torch.cuda.synchronize(H.device)
+    initialization_seconds = time.perf_counter() - started
     if objective_mode == 'uniform':
         X = torch.cat((X, X.new_ones(N, 1)), dim=1)
         d = X.shape[1]
@@ -159,6 +174,7 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
 
     counts, sums, label_sums = aggregate()
     error, variance, objective = score(counts, sums, label_sums)
+    initial_variance, initial_moment = float(variance), float(error.norm())
     history, moves_history = [objective], []
     snapshots = {}
 
@@ -302,6 +318,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                   moves=moves_history, sweeps=len(moves_history),
                   converged=converged, B=float(B), seed=int(seed))
     result['objective_mode'] = objective_mode
+    result.update(initialization=init, initialization_seconds=initialization_seconds,
+                  initial_V=initial_variance, initial_moment_error=initial_moment, **initialization_info)
     result['bound_J'] = B * B / 4 * result['V'] + 2 * B * result['moment_error']
     if objective_mode == 'frobenius':
         frobenius = float(covariance(counts, sums).norm())
