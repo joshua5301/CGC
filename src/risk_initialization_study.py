@@ -18,14 +18,18 @@ def compare_risk_initializations(configs, output_dir, partition_seeds=(0, 1, 2, 
                                  student_seeds=tuple(range(200, 210)), teacher_seed=0,
                                  max_sweeps=100, split_random_directions=2, block_size=1024,
                                  data_dir='/content/data/', epochs=1000, eval_every=10,
-                                 hidden=256, device='cuda'):
+                                 hidden=256, device='cuda', inits=('surrogate', 'split'), teacher_cache_dir=None):
     configs = pd.DataFrame(configs)
-    if configs.empty or configs.duplicated(['dataset', 'ratio']).any():
-        raise ValueError('Require one fixed configuration per dataset and ratio')
+    if configs.empty or configs.duplicated(['dataset', 'ratio', 'B']).any():
+        raise ValueError('Require unique dataset, ratio, B configurations')
+    if not inits or len(set(inits)) != len(inits) or set(inits) - {'surrogate', 'split'}:
+        raise ValueError('Invalid initialization methods')
     if not partition_seeds or not student_seeds or len(set(partition_seeds)) != len(partition_seeds) or len(set(student_seeds)) != len(student_seeds):
         raise ValueError('Require nonempty unique seeds')
     output_dir, device = Path(output_dir), torch.device(device)
     output_dir.mkdir(parents=True, exist_ok=True)
+    teacher_cache_dir = Path(teacher_cache_dir) if teacher_cache_dir is not None else output_dir
+    teacher_cache_dir.mkdir(parents=True, exist_ok=True)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True,
                                        cwd=Path(__file__).resolve().parents[1]).strip()
     settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting='uniform')
@@ -44,11 +48,13 @@ def compare_risk_initializations(configs, output_dir, partition_seeds=(0, 1, 2, 
                             student_seeds=list(student_seeds), teacher_seed=teacher_seed,
                             max_sweeps=max_sweeps, split_random_directions=split_random_directions,
                             block_size=block_size, data_dir=str(data_dir), student=settings,
-                            move_seed_offset=100000, evaluate_test=False)
+                            move_seed_offset=100000, evaluate_test=False, inits=list(inits))
             case = output_dir / f'{dataset}_{ratio:g}_{_fingerprint(protocol)}'
             case.mkdir(exist_ok=True)
             _save_json(case / 'protocol.json', protocol)
-            teacher_path = case / 'teacher.pt'
+            teacher_protocol = {k: protocol[k] for k in ('revision', 'torch', 'dataset', 'data_dir', 'teacher_seed')}
+            teacher_protocol.update({k: params[k] for k in ('teacher_kernel', 'gamma', 'T', 'basis')})
+            teacher_path = teacher_cache_dir / f'teacher_{_fingerprint(teacher_protocol)}.pt'
             if teacher_path.exists():
                 Q = torch.load(teacher_path, map_location=device, weights_only=True)
             else:
@@ -60,8 +66,8 @@ def compare_risk_initializations(configs, output_dir, partition_seeds=(0, 1, 2, 
                 temporary.replace(teacher_path)
             path = case / 'runs.csv'
             records = pd.read_csv(path).to_dict('records') if path.exists() else []
-            jobs = [(ps, init) for ps in partition_seeds for init in ('surrogate', 'split')]
-            for ps, init in tqdm(jobs, desc=f'{dataset} {ratio:g} initialization comparison'):
+            jobs = [(ps, init) for ps in partition_seeds for init in inits]
+            for ps, init in tqdm(jobs, desc=f'{dataset} {ratio:g} B={params["B"]:.4g}'):
                 artifact_path = case / f'{init}_{ps}.pt'
                 if artifact_path.exists():
                     artifact = torch.load(artifact_path, map_location='cpu', weights_only=True)
@@ -77,7 +83,7 @@ def compare_risk_initializations(configs, output_dir, partition_seeds=(0, 1, 2, 
                     if any(r['init'] == init and r['partition_seed'] == ps and r['student_seed'] == ss for r in records):
                         continue
                     val, _, epoch = _train_student(cx, cy, validation, params, ss, settings)
-                    records.append(dict(dataset=dataset, ratio=ratio, init=init, partition_seed=ps,
+                    records.append(dict(dataset=dataset, ratio=ratio, B=params['B'], init=init, partition_seed=ps,
                         student_seed=ss, validation=100 * val, best_epoch=epoch, nodes=len(cx),
                         J_initial=artifact['history'][0], J_final=artifact['J'],
                         V_initial=artifact['initial_V'], E_initial=artifact['initial_moment_error'],
@@ -95,17 +101,18 @@ def compare_risk_initializations(configs, output_dir, partition_seeds=(0, 1, 2, 
     runs = pd.concat(frames, ignore_index=True)
     metrics = ['nodes', 'J_initial', 'J_final', 'V_initial', 'E_initial', 'V_final', 'E_final',
                'forced_splits', 'initialization_seconds', 'partition_seconds', 'sweeps', 'converged']
-    per_seed = runs.groupby(['dataset', 'ratio', 'init', 'partition_seed'], as_index=False).agg(
+    per_seed = runs.groupby(['dataset', 'ratio', 'B', 'init', 'partition_seed'], as_index=False).agg(
         validation_mean=('validation', 'mean'), student_std=('validation', 'std'),
         **{k: (k, 'first') for k in metrics})
-    summary = per_seed.groupby(['dataset', 'ratio', 'init'], as_index=False).agg(
+    summary = per_seed.groupby(['dataset', 'ratio', 'B', 'init'], as_index=False).agg(
         validation_mean=('validation_mean', 'mean'), partition_std=('validation_mean', 'std'),
         J_initial=('J_initial', 'mean'), J_final=('J_final', 'mean'),
+        V_final=('V_final', 'mean'), E_final=('E_final', 'mean'),
         converged_fraction=('converged', 'mean'), initialization_seconds=('initialization_seconds', 'mean'))
-    wide = per_seed.pivot(index=['dataset', 'ratio', 'partition_seed'], columns='init',
+    wide = per_seed.pivot(index=['dataset', 'ratio', 'B', 'partition_seed'], columns='init',
                           values=['validation_mean', 'J_initial', 'J_final'])
     paired = pd.DataFrame({f'delta_{metric}': wide[metric]['split'] - wide[metric]['surrogate']
-                           for metric in ('validation_mean', 'J_initial', 'J_final')}).reset_index()
+                           for metric in ('validation_mean', 'J_initial', 'J_final')}).reset_index() if len(inits) == 2 else pd.DataFrame()
     for name, frame in dict(runs=runs, per_seed=per_seed, summary=summary, paired=paired).items():
         _save_csv(frame, output_dir / f'{name}.csv')
     return dict(runs=runs, per_seed=per_seed, summary=summary, paired=paired)

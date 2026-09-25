@@ -324,6 +324,10 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+`src.risk_b_study.run_b_study` compares Risk initializers with equal B-only grids
+and confirms validation-selected settings on new partition and GCN seeds.
+See [B sweep protocol](docs/risk_b_study.md).
+
 Original Risk supports `partition={'init': 'split'}` in `run_experiments`.
 Use `src.risk_initialization_study.compare_risk_initializations` for a paired
 comparison with the existing initializer; see [protocol](docs/risk_split_initialization.md).
