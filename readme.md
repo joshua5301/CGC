@@ -396,3 +396,7 @@ Validation is split into calibration and model selection subsets; test is only
 evaluated for selected settings. See [protocol and limitations](docs/grip_reliability.md).
 The reusable partition API accepts optional `label_weights`; omitting them retains
 the original algorithm.
+
+Reliability grids use `k`, `alpha`, `kl_weight`, and `dropout`. There is no `tau`:
+`alpha` blends mean-one inverse-error weights with uniform weights after clipping
+and normalization. Include `alpha=0` to allow selection of the original GRIP.

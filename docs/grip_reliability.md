@@ -15,13 +15,18 @@ No validation or test node is used as a labeled distance reference.
 Validation is stratified into calibration and selection subsets. The teacher is
 fit using training labels only. Increasing isotonic regression maps distance to
 teacher Brier error using calibration labels only. Predictions outside its fitted
-distance interval use boundary values. Raw weights are clip(1/(tau+error), lo, hi),
-then divided by their mean; the final normalized weights need not lie in [lo, hi].
+distance interval use boundary values. Raw weights are clip(1/max(error, 1e-12), lo, hi), then divided by their mean
+to obtain base weights b. Final weights are 1 + alpha*(b-1), with alpha in [0,1].
+The error floor only prevents division by zero and is not a search parameter.
+Clipping limits are applied before normalization; final weights need not lie in
+[lo, hi]. The fitted error curve and base weights do not depend on alpha.
+Alpha=0 is deduplicated across k and calls the original unweighted partition path.
+The grid API now requires alpha instead of tau; old protocols are not reused.
 This estimates expected prediction error, not a certified inverse noise variance.
 
 Each partition seed is compared separately. Both baseline and reliability methods
 search the same mu/dropout grid, selection nodes and student seeds. Reliability
-additionally searches k/tau, so it uses a larger search budget. Baseline uses the
+additionally searches k/alpha, so it uses a larger search budget. Baseline uses the
 unchanged partition path. Only converged full-budget partitions are eligible.
 Fresh student seeds evaluate the selected setting; checkpoint selection uses the
 selection subset, and test is evaluated only for the selected settings. Validation

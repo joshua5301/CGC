@@ -48,16 +48,29 @@ def support_distances(features, train_mask, ks, block_size=512):
     return {k: torch.cat(v).numpy() for k, v in result.items()}
 
 
-def fit_reliability(distance, calibration_ids, errors, tau, clip):
-    if tau <= 0 or not 0 < clip[0] <= clip[1]:
-        raise ValueError('Require positive tau and ordered positive clipping limits')
+def fit_reliability(distance, calibration_ids, errors, clip):
+    if not np.isfinite(clip).all() or not 0 < clip[0] <= clip[1]:
+        raise ValueError('Require finite ordered positive clipping limits')
     estimator = IsotonicRegression(increasing=True, out_of_bounds='clip')
     estimator.fit(distance[calibration_ids], errors)
     predicted = estimator.predict(distance)
-    raw = np.clip(1 / (tau + predicted), *clip)
+    raw = np.clip(1 / np.maximum(predicted, 1e-12), *clip)
     weights = raw / raw.mean()
     curve = dict(distance=estimator.X_thresholds_.tolist(), error=estimator.y_thresholds_.tolist())
     return weights, predicted, curve
+
+
+def blend_reliability(base, alpha):
+    if not np.isfinite(alpha) or not 0 <= alpha <= 1:
+        raise ValueError('Require finite alpha in [0, 1]')
+    return 1 + alpha * (base - 1)
+
+
+def reliability_choices(ks, alphas):
+    choices = []
+    for alpha in sorted(set(alphas)):
+        choices.extend([(None, 0.)] if alpha == 0 else [(k, alpha) for k in dict.fromkeys(ks)])
+    return choices
 
 
 def run_reliability_study(datasets, output_dir, grid, configs=None,
@@ -67,8 +80,10 @@ def run_reliability_study(datasets, output_dir, grid, configs=None,
                           basis=3000, grip_steps=1000, epochs=1000, eval_every=10,
                           hidden=256, lr=.01, weight_decay=.0005,
                           data_dir='/content/data/', device='cuda'):
-    if set(grid) != {'k', 'tau', 'kl_weight', 'dropout'} or any(not v for v in grid.values()):
-        raise ValueError('Grid requires nonempty k, tau, kl_weight and dropout lists')
+    if set(grid) != {'k', 'alpha', 'kl_weight', 'dropout'} or any(not v for v in grid.values()):
+        raise ValueError('Grid requires nonempty k, alpha, kl_weight and dropout lists')
+    if any(not np.isfinite(a) or not 0 <= a <= 1 for a in grid['alpha']):
+        raise ValueError('Require finite alpha in [0, 1]')
     if set(search_seeds) & set(final_seeds) or not search_seeds or not final_seeds:
         raise ValueError('Require disjoint nonempty search and final student seeds')
     if not 0 < calibration_fraction < 1 or not partition_seeds:
@@ -77,7 +92,8 @@ def run_reliability_study(datasets, output_dir, grid, configs=None,
     device = torch.device(device)
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True,
                                        cwd=Path(__file__).resolve().parents[1]).strip()
-    protocol = dict(revision=revision, datasets=datasets, grid=grid,
+    protocol = dict(version=2, weighting='inverse_brier_clipped_normalized_then_alpha',
+        error_floor=1e-12, revision=revision, datasets=datasets, grid=grid,
         configs={f'{d}:{r}': v for (d, r), v in (configs or {}).items()},
         partition_seeds=list(partition_seeds), search_seeds=list(search_seeds),
         final_seeds=list(final_seeds), calibration_fraction=calibration_fraction,
@@ -127,39 +143,41 @@ def run_reliability_study(datasets, output_dir, grid, configs=None,
             y = train['y'].cpu()
             cal_error = (q[cal] - torch.nn.functional.one_hot(y[cal], q.shape[1])).square().sum(1).numpy()
             weights = {}
-            for k, tau in product(grid['k'], grid['tau']):
-                w, predicted, curve = fit_reliability(distances[k], cal, cal_error, tau, clip)
-                weights[(k, tau)] = torch.as_tensor(w, device=device)
-                tag = f'{dataset}_{ratio:g}_k{k}_tau{tau:g}'
+            for k in dict.fromkeys(grid['k']):
+                base, predicted, curve = fit_reliability(distances[k], cal, cal_error, clip)
+                tag = f'{dataset}_{ratio:g}_k{k}'
                 save_json(root / f'{tag}_curve.json', curve)
                 save_tensor(root / f'{tag}_weights.pt', dict(distance=torch.tensor(distances[k]),
-                    predicted_error=torch.tensor(predicted), weights=torch.tensor(w)))
-                for split, subset in [('calibration', cal), ('selection', select)]:
-                    error = (q[subset] - torch.nn.functional.one_hot(y[subset], q.shape[1])).square().sum(1).numpy()
-                    frame = pd.DataFrame(dict(distance=distances[k][subset], error=error))
-                    diagnostic_rows.append(dict(dataset=dataset, ratio=ratio, k=k, tau=tau, split=split,
-                        spearman=frame.corr(method='spearman').iloc[0, 1],
-                        error_prediction_mse=float(np.mean((predicted[subset] - error) ** 2)),
-                        constant_prediction_mse=float(np.mean((cal_error.mean() - error) ** 2)),
-                        weight_min=float(w.min()), weight_max=float(w.max())))
+                    predicted_error=torch.tensor(predicted), base_weights=torch.tensor(base)))
+                for alpha in dict.fromkeys(grid['alpha']):
+                    w = blend_reliability(base, alpha)
+                    weights[(k, alpha)] = torch.as_tensor(w, device=device)
+                    for split, subset in [('calibration', cal), ('selection', select)]:
+                        error = (q[subset] - torch.nn.functional.one_hot(y[subset], q.shape[1])).square().sum(1).numpy()
+                        frame = pd.DataFrame(dict(distance=distances[k][subset], error=error))
+                        diagnostic_rows.append(dict(dataset=dataset, ratio=ratio, k=k, alpha=alpha, split=split,
+                            spearman=frame.corr(method='spearman').iloc[0, 1],
+                            error_prediction_mse=float(np.mean((predicted[subset] - error) ** 2)),
+                            constant_prediction_mse=float(np.mean((cal_error.mean() - error) ** 2)),
+                            weight_min=float(w.min()), weight_max=float(w.max())))
             q = q.to(device)
             for ps in partition_seeds:
                 for method in ('baseline', 'reliability'):
                     folder = root / f'{dataset}_{ratio:g}_{ps}_{method}'
                     folder.mkdir(exist_ok=True)
-                    choices = [(None, None)] if method == 'baseline' else list(product(grid['k'], grid['tau']))
+                    choices = [(None, 0.)] if method == 'baseline' else reliability_choices(grid['k'], grid['alpha'])
                     candidates = list(product(choices, grid['kl_weight'], grid['dropout']))
                     trials = []
-                    for (k, tau), mu, dropout in tqdm(candidates, desc=f'{dataset} {ratio:g} {ps} {method}'):
-                        params = dict(k=k, tau=tau, kl_weight=mu, dropout=dropout)
-                        cid = _fingerprint(dict(k=k, tau=tau, kl_weight=mu))
+                    for (k, alpha), mu, dropout in tqdm(candidates, desc=f'{dataset} {ratio:g} {ps} {method}'):
+                        params = dict(k=k, alpha=alpha, kl_weight=mu, dropout=dropout)
+                        cid = _fingerprint(dict(k=k, alpha=alpha, kl_weight=mu))
                         artifact_path = folder / f'partition_{cid}.pt'
                         if artifact_path.exists():
                             artifact = torch.load(artifact_path, weights_only=True)
                         else:
                             artifact = partition(features, q, BUDGET[(dataset, ratio)], mu,
                                 iters=grip_steps, seed=ps, return_diagnostics=True,
-                                label_weights=None if k is None else weights[(k, tau)])
+                                label_weights=None if k is None else weights[(k, alpha)])
                             save_tensor(artifact_path, artifact)
                         eligible = artifact['converged'] and artifact['nodes'] == BUDGET[(dataset, ratio)]
                         values = []
@@ -199,7 +217,7 @@ def run_reliability_study(datasets, output_dir, grid, configs=None,
                         records.append(record)
                         final_rows.append(dict(**identity, student_seed=ss, **record))
                     summaries.append(dict(**identity, **config, nodes=artifact['nodes'],
-                        **{k: best[k] for k in ('k', 'tau', 'kl_weight', 'dropout')},
+                        **{k: best[k] for k in ('k', 'alpha', 'kl_weight', 'dropout')},
                         search_val=100 * best['search_val'],
                         final_val=np.mean([r['valid'] for r in records]),
                         final_val_std=np.std([r['valid'] for r in records], ddof=1),
