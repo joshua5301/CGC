@@ -80,7 +80,7 @@ def _accuracy(model, evaluation):
     return float(correct.float().mean() if mask is None else correct[mask].float().mean())
 
 
-def _train_student(cx, cy, validation, params, seed, settings, testing=None, counts=None):
+def _train_student(cx, cy, validation, params, seed, settings, testing=None, counts=None, return_model=False):
     weighting = settings.get('loss_weighting', 'uniform')
     if weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
@@ -111,13 +111,17 @@ def _train_student(cx, cy, validation, params, seed, settings, testing=None, cou
             value = _accuracy(model, validation)
             if value > best_val:
                 best_val, best_epoch = value, epoch
-                if testing is not None:
+                if testing is not None or return_model:
                     best_state = {k: v.detach().cpu().clone()
                                   for k, v in model.state_dict().items()}
     test_value = None
-    if testing is not None:
+    if testing is not None or return_model:
         model.load_state_dict(best_state)
+    if testing is not None:
         test_value = _accuracy(model, testing)
+    if return_model:
+        model.eval()
+        return best_val, test_value, best_epoch, model
     return best_val, test_value, best_epoch
 
 
