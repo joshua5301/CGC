@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-import optuna
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -24,6 +23,7 @@ from src.uniform_transport import uniform_transport
 from src.gcn_aware import gcn_aware_partition
 from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
+from src.grid_search import GridStudy
 
 
 def _fingerprint(value):
@@ -126,7 +126,13 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
-                    aware=None, grip_init='kmeans', grip_init_block_size=256):
+                    aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna'):
+    if search not in ('optuna', 'grid'):
+        raise ValueError('Unknown search method')
+    if search == 'grid' and (not space or any(not isinstance(v, (list, tuple)) or not v for v in space.values())):
+        raise ValueError('Grid search requires nonempty lists for every parameter')
+    if search == 'grid' and initial_configs:
+        raise ValueError('Include initial configurations in the grid instead')
     if grip_init not in ('kmeans', 'greedy') or grip_init_block_size < 1:
         raise ValueError('Invalid GRIP initialization settings')
     if loss_weighting not in ('uniform', 'mass'):
@@ -169,7 +175,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                        cwd=Path(__file__).resolve().parents[1]).strip()
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    if search == 'optuna':
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
     summaries = []
 
     for name, ratios in datasets.items():
@@ -214,13 +222,14 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                             aware=aware,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
                             teacher=teacher_config, seed=seed, partition=solver,
-                            space=space, search_seeds=list(search_seeds),
+                            space=space, search=search, grid_order=list(space) if search == 'grid' else None,
+                            search_seeds=list(search_seeds),
                             final_seeds=list(final_seeds), student=settings,
                             lr=lr, weight_decay=weight_decay, layers=2, loss=f'{loss_weighting}_soft_ce')
             case = output_dir / f'{name}_{ratio:g}_{_fingerprint(protocol)}'
             case.mkdir(parents=True, exist_ok=True)
             (case / 'protocol.json').write_text(json.dumps(protocol, indent=2), encoding='utf-8')
-            study = optuna.create_study(
+            study = GridStudy(space, case) if search == 'grid' else optuna.create_study(
                 study_name='validation', storage=f'sqlite:///{case / "study.db"}',
                 direction='maximize', sampler=optuna.samplers.TPESampler(seed=seed),
                 pruner=optuna.pruners.NopPruner(), load_if_exists=True)
@@ -300,11 +309,14 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                         trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
 
-            completed = sum(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
-            remaining = max(0, n_trials - completed)
-            if remaining:
-                study.optimize(objective, n_trials=remaining, n_jobs=1,
-                               gc_after_trial=True, show_progress_bar=True)
+            if search == 'grid':
+                study.optimize(objective)
+            else:
+                completed = sum(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
+                remaining = max(0, n_trials - completed)
+                if remaining:
+                    study.optimize(objective, n_trials=remaining, n_jobs=1,
+                                   gc_after_trial=True, show_progress_bar=True)
             study.trials_dataframe().to_csv(case / 'trials.csv', index=False)
             best = study.best_trial
             params = best.user_attrs['config']
@@ -331,7 +343,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 temporary.replace(final_path)
                 del cx, cy
             summaries.append(dict(
-                dataset=name, ratio=ratio, method=method, nodes=best.user_attrs['nodes'],
+                dataset=name, ratio=ratio, method=method, search=search, nodes=best.user_attrs['nodes'],
                 requested_nodes=m, loss_weighting=loss_weighting, **params,
                 search_val=100 * best.value, final_val=100 * final['validation'].mean(),
                 final_val_std=100 * final['validation'].std(ddof=1) if len(final) > 1 else 0.0,

@@ -324,6 +324,14 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+For exhaustive search use `run_experiments(..., search='grid', space=GRID)`.
+Every value in `GRID` must be a nonempty list. All Cartesian-product combinations
+are evaluated; `n_trials` does not limit grid search. This path does not import
+or call Optuna. Each completed combination is saved atomically and skipped on
+resume with the same protocol. Changing the grid, its key order, revision, or
+evaluation settings creates a separate run. Search uses mean validation accuracy;
+the selected configuration uses the existing final validation/test evaluation.
+
 Use `run_experiments(..., method='grip', grip_init='greedy')` for exact greedy
 node selection under GRIP's feature-plus-KL cost. `grip_init='kmeans'` retains
 the original initialization. See [details](docs/grip_greedy_initialization.md).
