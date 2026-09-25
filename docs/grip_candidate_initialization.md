@@ -30,3 +30,20 @@ over random pools. The existing runner reports convergence and actual budget;
 it does not exclude nonconverged or reduced-budget runs from selection.
 
 Local numerical tests were not run. Run `tests/test_grip_candidates.py` in Colab.
+
+## Direct GRIP initialization
+
+Set `grip_candidate_refinement='grip'` to skip K-means entirely. Candidate
+selection is unchanged. Each selected node supplies its feature and teacher
+probability as the initial representative. The first assignment minimizes
+the existing normalized distance plus KL cost for the current teacher and mu.
+Selected nodes are assigned to their own zero-cost representative, resolving
+duplicate-point ties and roundoff. This guarantees occupied cells only at the
+first assignment; subsequent GRIP updates and empty-cell removal are unchanged.
+Then geometric medians and mean teacher labels are computed and the existing
+GRIP loop runs. Training labels never replace teacher probabilities.
+
+Only selected IDs are cached across teacher configurations in direct mode;
+the initial assignment is recomputed for each gamma, temperature, kernel and mu.
+The refinement mode is recorded in the protocol and summary. Dataset-specific
+output directories allow separate Colab sessions to run Cora and Citeseer.

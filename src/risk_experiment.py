@@ -134,7 +134,10 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
                     aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna',
-                    grip_seed=1234, grip_candidates=None, grip_candidate_seed=0):
+                    grip_seed=1234, grip_candidates=None, grip_candidate_seed=0,
+                    grip_candidate_refinement='kmeans'):
+    if grip_candidate_refinement not in ('kmeans', 'grip') or (grip_candidate_refinement == 'grip' and grip_candidates is None):
+        raise ValueError('Direct GRIP initialization requires a candidate pool')
     if grip_candidates is not None and (grip_candidates not in ('train', 'random') or method != 'grip' or grip_init != 'kmeans'):
         raise ValueError('Candidate initialization requires GRIP with kmeans and train/random candidates')
     if search not in ('optuna', 'grid'):
@@ -234,6 +237,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                             grip_init=grip_init, grip_init_block_size=grip_init_block_size,
                             grip_seed=grip_seed,
                             grip_candidates=grip_candidates, grip_candidate_seed=grip_candidate_seed,
+                            grip_candidate_refinement=grip_candidate_refinement,
                             initial_configs=initial_configs,
                             aware=aware,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
@@ -252,7 +256,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     candidate_state = torch.load(candidate_path, map_location='cpu', weights_only=True)
                 else:
                     candidate_state = candidate_initialization(H, train_mask, m, grip_candidates,
-                                                               grip_candidate_seed, grip_seed)
+                                                               grip_candidate_seed, grip_seed, grip_candidate_refinement)
                     temporary = candidate_path.with_suffix('.tmp')
                     torch.save(candidate_state, temporary)
                     temporary.replace(candidate_path)
@@ -301,7 +305,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                         H, Q, m, kl_weight=params['kl_weight'], iters=grip_steps,
                         return_state=True, seed=grip_seed, init=grip_init,
                         init_block_size=grip_init_block_size, label_weights=label_weights,
-                        initial_assignment=None if candidate_state is None else candidate_state['assignment'])
+                        initial_assignment=None if candidate_state is None else candidate_state.get('assignment'),
+                        initial_node_ids=candidate_state['initial_centroid_ids']
+                        if candidate_state is not None and grip_candidate_refinement == 'grip' else None)
                     condensed = dict(x=x.float().cpu(), y=y.float().cpu(),
                                      counts=torch.bincount(assignment).cpu(),
                                      converged=converged, J=None, history=[None], sweeps=None)
@@ -393,6 +399,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 summaries[-1]['grip_seed'] = grip_seed
                 summaries[-1]['grip_candidates'] = grip_candidates
                 summaries[-1]['grip_candidate_seed'] = grip_candidate_seed
+                summaries[-1]['grip_candidate_refinement'] = grip_candidate_refinement
             if method == 'transport':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                                       ('status', 'mass_tv', 'row_residual', 'column_residual')})

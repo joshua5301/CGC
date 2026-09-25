@@ -137,7 +137,9 @@ def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_w
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
               init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None, return_initial_state=False,
-              initial_assignment=None):
+              initial_assignment=None, initial_node_ids=None):
+    if initial_assignment is not None and initial_node_ids is not None:
+        raise ValueError('Specify only one initial state')
     if init not in ('kmeans', 'kmeans++', 'greedy') + PAIRED_INITS or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0 or feature_steps < 1:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
@@ -163,7 +165,22 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     global_label = y_pred.mean(0)
     kl_scale = (entropy.squeeze(1) - y_pred @ global_label.log()).mean().clamp_min(EPS)
     init_info = {}
-    if initial_assignment is not None:
+    if initial_node_ids is not None:
+        ids = initial_node_ids.to(device=X.device, dtype=torch.long)
+        if ids.shape != (cluster_num,) or len(ids.unique()) != cluster_num or int(ids.min()) < 0 or int(ids.max()) >= len(X):
+            raise ValueError('Require K distinct initial node IDs')
+        parts = []
+        for start in range(0, len(X), 8192):
+            stop = start + 8192
+            dist = torch.cdist(X[start:stop], X[ids]) / dist_scale
+            kl = (entropy[start:stop] - y_pred[start:stop] @ y_pred[ids].log().T) / kl_scale
+            if label_weights is not None:
+                kl = kl * label_weights[start:stop, None]
+            parts.append((dist + kl_weight * kl).argmin(1))
+        assign = torch.cat(parts)
+        assign[ids] = torch.arange(cluster_num, device=X.device)
+        init_info['initial_centroid_ids'] = ids.cpu()
+    elif initial_assignment is not None:
         assign = initial_assignment.to(device=X.device, dtype=torch.long).clone()
         if assign.shape != (len(X),) or int(assign.min()) < 0 or int(assign.max()) >= cluster_num:
             raise ValueError('Invalid initial assignment')

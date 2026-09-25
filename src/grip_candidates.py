@@ -35,9 +35,13 @@ def coverage_seeds(x, candidates, count, block_size=256):
     return ids[chosen].cpu(), history
 
 
-def candidate_initialization(x, train_mask, count, source, candidate_seed=0, kmeans_seed=1234):
+def candidate_initialization(x, train_mask, count, source, candidate_seed=0, kmeans_seed=1234, refinement='kmeans'):
+    if refinement not in ('kmeans', 'grip'):
+        raise ValueError('Unknown candidate refinement')
     candidates = candidate_pool(train_mask, source, candidate_seed)
     ids, history = coverage_seeds(x, candidates, count)
-    assignment = kmeans_init(x, count, seed=kmeans_seed, initial_centers=x[ids.to(x.device)])
-    return dict(candidate_ids=candidates, initial_centroid_ids=ids,
-                coverage_history=history, assignment=assignment.cpu())
+    state = dict(candidate_ids=candidates, initial_centroid_ids=ids, coverage_history=history)
+    if refinement == 'kmeans':
+        state['assignment'] = kmeans_init(x, count, seed=kmeans_seed,
+                                        initial_centers=x[ids.to(x.device)]).cpu()
+    return state

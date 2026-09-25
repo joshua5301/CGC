@@ -4,6 +4,33 @@ from src.grip_candidates import candidate_pool, coverage_seeds
 from src.partition import kmeans_init, partition
 
 
+def test_direct_candidates_skip_kmeans(monkeypatch):
+    import src.grip_candidates as module
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Direct initialization must not run K-means')
+    monkeypatch.setattr(module, 'kmeans_init', forbidden)
+    x = torch.tensor([[0.], [1.], [4.], [5.]])
+    state = module.candidate_initialization(x, torch.tensor([True, False, True, False]),
+                                          2, 'train', refinement='grip')
+    assert set(state['initial_centroid_ids'].tolist()) == {0, 2}
+    assert 'assignment' not in state
+
+
+def test_direct_grip_assignment_uses_labels(monkeypatch):
+    import src.partition as module
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Direct initialization must not run K-means')
+    monkeypatch.setattr(module, 'kmeans_init', forbidden)
+    x = torch.tensor([[0.], [10.], [1.], [9.]])
+    q = torch.tensor([[.99, .01], [.01, .99], [.01, .99], [.99, .01]])
+    result = partition(x, q, 2, kl_weight=100., initial_node_ids=torch.tensor([0, 1]),
+                       return_diagnostics=True, return_initial_state=True)
+    assert result['initial_assignment'].tolist() == [0, 1, 1, 0]
+    baseline = partition(x, q, 2, kl_weight=0., initial_node_ids=torch.tensor([0, 1]),
+                         return_diagnostics=True, return_initial_state=True)
+    assert baseline['initial_assignment'].tolist() == [0, 1, 0, 1]
+
+
 def test_pool_size_reproducibility_and_train_membership():
     mask = torch.tensor([True, False, True, False, True, False])
     assert candidate_pool(mask, 'train').tolist() == [0, 2, 4]
