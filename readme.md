@@ -322,3 +322,9 @@ mass-weighted constrained-linear-student assumptions remain; evaluation defaults
 to two-layer GCN and uniform CE. Local verification was limited to AST parsing
 and diff checks. No local training, imports of model modules or smoke tests ran.
 
+# GRIP-cost greedy initialization
+
+Use `run_experiments(..., method='grip', grip_init='greedy')` for exact greedy
+node selection under GRIP's feature-plus-KL cost. `grip_init='kmeans'` retains
+the original initialization. See [details](docs/grip_greedy_initialization.md).
+
