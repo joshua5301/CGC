@@ -26,6 +26,7 @@ from src.teacher import fit_logistic, get_kernel_features
 from src.utils import BUDGET, normalize_adj_sparse
 from src.grid_search import GridStudy
 from src.grip_distance import distance_weights, training_support_distance
+from src.grip_candidates import candidate_initialization
 
 
 def _fingerprint(value):
@@ -133,7 +134,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
                     aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna',
-                    grip_seed=1234):
+                    grip_seed=1234, grip_candidates=None, grip_candidate_seed=0):
+    if grip_candidates is not None and (grip_candidates not in ('train', 'random') or method != 'grip' or grip_init != 'kmeans'):
+        raise ValueError('Candidate initialization requires GRIP with kmeans and train/random candidates')
     if search not in ('optuna', 'grid'):
         raise ValueError('Unknown search method')
     if search == 'grid' and (not space or any(not isinstance(v, (list, tuple)) or not v for v in space.values())):
@@ -230,6 +233,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                             method=method, grip_steps=grip_steps, evaluate_test=evaluate_test,
                             grip_init=grip_init, grip_init_block_size=grip_init_block_size,
                             grip_seed=grip_seed,
+                            grip_candidates=grip_candidates, grip_candidate_seed=grip_candidate_seed,
                             initial_configs=initial_configs,
                             aware=aware,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
@@ -241,6 +245,17 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             case = output_dir / f'{name}_{ratio:g}_{_fingerprint(protocol)}'
             case.mkdir(parents=True, exist_ok=True)
             (case / 'protocol.json').write_text(json.dumps(protocol, indent=2), encoding='utf-8')
+            candidate_state = None
+            if grip_candidates is not None:
+                candidate_path = case / 'candidate_initialization.pt'
+                if candidate_path.exists():
+                    candidate_state = torch.load(candidate_path, map_location='cpu', weights_only=True)
+                else:
+                    candidate_state = candidate_initialization(H, train_mask, m, grip_candidates,
+                                                               grip_candidate_seed, grip_seed)
+                    temporary = candidate_path.with_suffix('.tmp')
+                    torch.save(candidate_state, temporary)
+                    temporary.replace(candidate_path)
             study = GridStudy(space, case) if search == 'grid' else optuna.create_study(
                 study_name='validation', storage=f'sqlite:///{case / "study.db"}',
                 direction='maximize', sampler=optuna.samplers.TPESampler(seed=seed),
@@ -285,7 +300,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     x, y, assignment, converged = grip_partition(
                         H, Q, m, kl_weight=params['kl_weight'], iters=grip_steps,
                         return_state=True, seed=grip_seed, init=grip_init,
-                        init_block_size=grip_init_block_size, label_weights=label_weights)
+                        init_block_size=grip_init_block_size, label_weights=label_weights,
+                        initial_assignment=None if candidate_state is None else candidate_state['assignment'])
                     condensed = dict(x=x.float().cpu(), y=y.float().cpu(),
                                      counts=torch.bincount(assignment).cpu(),
                                      converged=converged, J=None, history=[None], sweeps=None)
@@ -375,6 +391,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             if method in ('grip', 'grip_distance'):
                 summaries[-1]['grip_init'] = grip_init
                 summaries[-1]['grip_seed'] = grip_seed
+                summaries[-1]['grip_candidates'] = grip_candidates
+                summaries[-1]['grip_candidate_seed'] = grip_candidate_seed
             if method == 'transport':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                                       ('status', 'mass_tv', 'row_residual', 'column_residual')})

@@ -60,12 +60,14 @@ def paired_feature_init(X, cluster_num, seed, init, steps=100):
         previous = assignment.clone()
     return assignment, indices, dict(feature_steps=steps, feature_converged=False)
 
-def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234, plus_plus=False):
+def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234, plus_plus=False, initial_centers=None):
     X_np = X.detach().cpu().numpy().astype('float32')
     kmeans = faiss.Kmeans(X_np.shape[1], cluster_num, gpu=False)
     kmeans.cp.min_points_per_centroid = 1
     kmeans.cp.seed = seed
-    if plus_plus:
+    if initial_centers is not None:
+        kmeans.train(X_np, init_centroids=initial_centers.detach().cpu().numpy().astype('float32'))
+    elif plus_plus:
         centers, _ = kmeans_plusplus(X_np, cluster_num, random_state=seed, n_local_trials=1)
         kmeans.train(X_np, init_centroids=centers)
     else:
@@ -134,7 +136,8 @@ def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_w
 
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
-              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None, return_initial_state=False):
+              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None, return_initial_state=False,
+              initial_assignment=None):
     if init not in ('kmeans', 'kmeans++', 'greedy') + PAIRED_INITS or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0 or feature_steps < 1:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
@@ -160,7 +163,11 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     global_label = y_pred.mean(0)
     kl_scale = (entropy.squeeze(1) - y_pred @ global_label.log()).mean().clamp_min(EPS)
     init_info = {}
-    if init in PAIRED_INITS:
+    if initial_assignment is not None:
+        assign = initial_assignment.to(device=X.device, dtype=torch.long).clone()
+        if assign.shape != (len(X),) or int(assign.min()) < 0 or int(assign.max()) >= cluster_num:
+            raise ValueError('Invalid initial assignment')
+    elif init in PAIRED_INITS:
         assign, indices, init_info = paired_feature_init(X, cluster_num, seed, init, feature_steps)
         init_info['initial_centroid_ids'] = indices.cpu()
     else:
