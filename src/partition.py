@@ -126,17 +126,33 @@ def cell_means(y_pred: torch.Tensor, assign: torch.Tensor, cluster_num: int):
 
 
 @torch.no_grad()
-def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_weight):
+def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_weight, label_weights=None):
     feature = float((X - centers[assignment]).norm(dim=1).mean() / dist_scale)
-    kl = float((Q * (Q.clamp_min(EPS).log() - labels[assignment].clamp_min(EPS).log())).sum(1).mean() / kl_scale)
+    divergence = (Q * (Q.clamp_min(EPS).log() - labels[assignment].clamp_min(EPS).log())).sum(1)
+    kl = float((divergence if label_weights is None else divergence * label_weights).mean() / kl_scale)
     return dict(feature=feature, kl=kl, weighted_kl=kl_weight * kl, J=feature + kl_weight * kl)
 
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
-              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100):
+              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None):
     if init not in ('kmeans', 'kmeans++', 'greedy') + PAIRED_INITS or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0 or feature_steps < 1:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
+    if label_weights is not None:
+        label_weights = label_weights.to(device=X.device, dtype=X.dtype)
+        if label_weights.shape != (len(X),) or not bool(torch.isfinite(label_weights).all()) or bool((label_weights <= 0).any()):
+            raise ValueError('Require one positive finite label weight per node')
+        if init == 'greedy':
+            raise ValueError('Weighted GRIP requires a feature-only initializer')
+        label_weights = label_weights / label_weights.mean()
+
+    def label_means(ids, count):
+        if label_weights is None:
+            return cell_means(y_pred, ids, count)
+        mass = X.new_zeros(count).index_add_(0, ids, label_weights)
+        sums = y_pred.new_zeros(count, y_pred.shape[1]).index_add_(0, ids, label_weights[:, None] * y_pred)
+        return sums / mass.clamp_min(EPS)[:, None]
+
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
 
     global_center = geometric_medians(X, torch.zeros(len(X), dtype=torch.long, device=X.device), 1)
@@ -155,13 +171,16 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
         means = cell_means(X, assign, cluster_num)
         initial_sse = float((X - means[assign]).square().sum(1).mean())
         initial = partition_cost(X, y_pred, assign, centers,
-                                 cell_means(y_pred, assign, cluster_num), dist_scale, kl_scale, kl_weight)
+                                 label_means(assign, cluster_num), dist_scale, kl_scale, kl_weight, label_weights)
     for _ in range(iters):
-        labels = cell_means(y_pred, assign, cluster_num).clamp(min=EPS)
+        labels = label_means(assign, cluster_num).clamp(min=EPS)
         costs = []
         for X_chunk, y_pred_chunk, ent_chunk in zip(X.split(8192), y_pred.split(8192), entropy.split(8192)):
             dist = torch.cdist(X_chunk, centers) / dist_scale
             kl = (ent_chunk - y_pred_chunk @ labels.log().T) / kl_scale
+            start = sum(len(v) for v in costs)
+            if label_weights is not None:
+                kl = kl * label_weights[start:start + len(kl), None]
             costs.append(dist + kl_weight * kl)
         new_assign = torch.cat(costs).argmin(dim=1)
         moved = int((new_assign != assign).sum())
@@ -174,9 +193,9 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     remap = torch.cumsum(keep, 0) - 1
     assign = remap[assign]
     X_cond = centers[keep]
-    y_cond = cell_means(y_pred, assign, int(keep.sum()))
+    y_cond = label_means(assign, int(keep.sum()))
     if return_diagnostics:
-        final = partition_cost(X, y_pred, assign, X_cond, y_cond, dist_scale, kl_scale, kl_weight)
+        final = partition_cost(X, y_pred, assign, X_cond, y_cond, dist_scale, kl_scale, kl_weight, label_weights)
         return dict(x=X_cond.float().cpu(), y=y_cond.float().cpu(),
                     counts=torch.bincount(assign).cpu(), assignment=assign.cpu(),
                     nodes=len(X_cond), initial_sse=initial_sse,

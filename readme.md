@@ -386,3 +386,13 @@ The default small-subset diagnostic is not a full-dataset optimality certificate
 Full-data mode and optional two-layer GCN/uniform-CE validation are supported.
 See [the formulation, limits and result interpretation](docs/risk_sdp.md).
 
+
+### Distance-based GRIP reliability
+
+`src.grip_reliability.run_reliability_study` compares original GRIP against
+positive mean-one node weights learned from training-label support distance and
+calibration-only Brier errors. Both use the existing two-layer GCN and uniform CE.
+Validation is split into calibration and model selection subsets; test is only
+evaluated for selected settings. See [protocol and limitations](docs/grip_reliability.md).
+The reusable partition API accepts optional `label_weights`; omitting them retains
+the original algorithm.
