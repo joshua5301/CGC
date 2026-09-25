@@ -81,3 +81,23 @@ Tests are intended for Colab: `python -m pytest -q tests/test_risk_sdp.py`.
 They compare the matrix objective with exhaustive hard partitions, check repaired
 dual witnesses against exhaustive optima, cover m=1/N, and verify rounding and
 Risk refinement. Local development does not execute these numerical tests.
+
+## Full-data grid search
+
+`src.risk_sdp_grid.run_sdp_grid` exhaustively searches teacher_kernel, gamma, T,
+basis, B, dropout, lr and weight_decay. Each teacher/B combination uses the full
+dataset and its original BUDGET entry, never a subset. Dropout/lr/weight_decay
+combinations reuse the same SDP and partitions. Teacher probabilities are cached
+across B values. Every method selects a partition by minimum J over the configured
+partition seeds, then selects hyperparameters by mean validation over search seeds.
+Only after all candidates finish and selected.csv is saved are the winning settings
+evaluated with separate final student seeds, including test accuracy at the
+validation-selected epoch. Final repeats measure student randomness conditional
+on the selected partition, not variability over new partitions.
+
+The default comparison includes surrogate and SDP initialization, independently
+selected on validation under the same grid. This is not a GRIP baseline. Results
+and individual student runs resume from protocol-hashed files. SCS time_limit_secs
+limits solver time, not CVXPY compilation, rounding, refinement or evaluation.
+An optimal_inaccurate result remains eligible and its status is reported; the
+returned hard partition is feasible, but the relaxation may not have converged.

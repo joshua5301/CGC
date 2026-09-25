@@ -19,7 +19,7 @@ from src.utils import BUDGET
 def run_sdp_study(configs, output_dir, sample_nodes=256, sample_clusters=8, sample_seed=0,
                   partition_seeds=(0, 1, 2), teacher_seed=0, max_sweeps=100,
                   sdp=None, student_seeds=(), epochs=1000, eval_every=10, hidden=256,
-                  data_dir='/content/data/', device='cuda'):
+                  data_dir='/content/data/', device='cuda', teacher_cache_dir=None):
     if not partition_seeds or len(set(partition_seeds)) != len(partition_seeds):
         raise ValueError('Require unique nonempty partition seeds')
     if sample_nodes is not None and (sample_nodes < 2 or not 1 <= sample_clusters <= sample_nodes):
@@ -51,7 +51,12 @@ def run_sdp_study(configs, output_dir, sample_nodes=256, sample_clusters=8, samp
         case.mkdir(exist_ok=True)
         _save_json(case / 'protocol.json', protocol)
         train, mask, validation, testing, H = _prepare_dataset(dataset, data_dir, device)
-        teacher_path = case / 'teacher.pt'
+        teacher_key = dict(revision=revision, dataset=dataset, data_dir=str(data_dir),
+            torch=str(torch.__version__), seed=teacher_seed,
+            **{k: params[k] for k in ('teacher_kernel', 'gamma', 'T', 'basis')})
+        teacher_folder = Path(teacher_cache_dir) if teacher_cache_dir is not None else case
+        teacher_folder.mkdir(parents=True, exist_ok=True)
+        teacher_path = teacher_folder / f'teacher_{_fingerprint(teacher_key)}.pt'
         if teacher_path.exists():
             Q = torch.load(teacher_path, map_location=device, weights_only=True)
         else:
