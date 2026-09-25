@@ -370,6 +370,15 @@ the original initialization. See [details](docs/grip_greedy_initialization.md).
 
 # Risk convex relaxation
 
+For a GRIP objective-only seed comparison, use
+`src.grip_seed_costs.measure_grip_seed_costs`. It fixes teacher probabilities and
+the stored GRIP hyperparameters, changes only the original FAISS k-means seed,
+and compares final normalized objective components against seed 1234. There is
+no student training or hyperparameter search. Nonconverged or reduced-budget
+partitions are retained but excluded from ranking; an invalid reference disables
+comparisons. `near_equal` uses absolute 1e-8 plus relative 1e-6 tolerance and does
+not imply identical assignments. Per-seed partitions are cached for resumption.
+
 `src.risk_sdp_study.run_sdp_study` compares the original Risk optimizer with a
 Peng–Wei-style SDP relaxation and rounded/refined partitions. It reports a
 numerically repaired dual lower bound separately from the solver's primal value.
