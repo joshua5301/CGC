@@ -368,3 +368,12 @@ Use `run_experiments(..., method='grip', grip_init='greedy')` for exact greedy
 node selection under GRIP's feature-plus-KL cost. `grip_init='kmeans'` retains
 the original initialization. See [details](docs/grip_greedy_initialization.md).
 
+# Risk convex relaxation
+
+`src.risk_sdp_study.run_sdp_study` compares the original Risk optimizer with a
+Peng–Wei-style SDP relaxation and rounded/refined partitions. It reports a
+numerically repaired dual lower bound separately from the solver's primal value.
+The default small-subset diagnostic is not a full-dataset optimality certificate.
+Full-data mode and optional two-layer GCN/uniform-CE validation are supported.
+See [the formulation, limits and result interpretation](docs/risk_sdp.md).
+
