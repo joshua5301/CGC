@@ -83,11 +83,12 @@ def run_grip_confusion_study(source_dir, output_dir, datasets, dropouts,
                     saved = dict(best_epoch=epoch, best_validation=val)
                     with torch.no_grad():
                         for split, (graph, selection) in [('valid', validation), ('test', testing)]:
-                            pred = _forward(model, graph['x'], graph['adj']).argmax(1)
+                            logits = _forward(model, graph['x'], graph['adj'])
                             target = graph['y']
                             if selection is not None:
-                                pred, target = pred[selection], target[selection]
-                            saved[split] = dict(prediction=pred.cpu(), target=target.cpu())
+                                logits, target = logits[selection], target[selection]
+                            saved[split] = dict(prediction=logits.argmax(1).cpu(),
+                                                logits=logits.cpu(), target=target.cpu())
                     temporary = path.with_suffix('.tmp')
                     torch.save(saved, temporary)
                     temporary.replace(path)
