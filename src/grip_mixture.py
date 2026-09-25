@@ -15,7 +15,7 @@ def quantize_labels(q, observations):
     scaled = q * observations
     counts = scaled.floor().long()
     remaining = observations - counts.sum(1)
-    order = (scaled - counts).argsort(1, descending=True, stable=True)
+    order = (scaled - counts).argsort(dim=1, descending=True, stable=True)
     additions = torch.arange(q.shape[1], device=q.device)[None, :] < remaining[:, None]
     counts.scatter_add_(1, order, additions.long())
     return counts.double() / observations
