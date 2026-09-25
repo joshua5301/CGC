@@ -134,7 +134,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         raise ValueError('Grid search requires nonempty lists for every parameter')
     if search == 'grid' and initial_configs:
         raise ValueError('Include initial configurations in the grid instead')
-    if grip_init not in ('kmeans', 'greedy') or grip_init_block_size < 1:
+    if grip_init not in ('kmeans', 'kmeans++', 'greedy') or grip_init_block_size < 1:
         raise ValueError('Invalid GRIP initialization settings')
     if loss_weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')

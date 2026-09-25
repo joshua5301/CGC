@@ -324,6 +324,14 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+`grip_init='kmeans++'` selects feature-space centers with vanilla D-squared
+sampling (`sklearn.cluster.kmeans_plusplus`, `n_local_trials=1`), then supplies
+them to the same FAISS K-means training used by `kmeans`. FAISS iteration and
+subsampling settings, subsequent GRIP updates, and student evaluation are
+unchanged. `grip_seed` controls the seeding. This is feature K-means++ followed
+by K-means, not the feature-plus-KL greedy initializer. The K-means++ guarantee
+concerns feature squared distortion, not final GRIP cost or validation accuracy.
+
 GRIP sweeps use `grip_seed=1234` by default, matching the implicit FAISS seed
 in the original `main.py` path. Earlier sweeps passed the experiment seed
 (usually 0) into FAISS instead. Set `grip_seed=0` to reproduce those sweeps.

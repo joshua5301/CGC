@@ -1,14 +1,19 @@
 import faiss
 import torch
+from sklearn.cluster import kmeans_plusplus
 
 EPS = 1e-12
 
-def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234):
+def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234, plus_plus=False):
     X_np = X.detach().cpu().numpy().astype('float32')
     kmeans = faiss.Kmeans(X_np.shape[1], cluster_num, gpu=False)
     kmeans.cp.min_points_per_centroid = 1
     kmeans.cp.seed = seed
-    kmeans.train(X_np)
+    if plus_plus:
+        centers, _ = kmeans_plusplus(X_np, cluster_num, random_state=seed, n_local_trials=1)
+        kmeans.train(X_np, init_centroids=centers)
+    else:
+        kmeans.train(X_np)
     _, assign = kmeans.index.search(X_np, 1)
     return torch.from_numpy(assign.flatten()).long().to(X.device)
 
@@ -65,7 +70,7 @@ def cell_means(y_pred: torch.Tensor, assign: torch.Tensor, cluster_num: int):
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
               init='kmeans', init_block_size=256):
-    if init not in ('kmeans', 'greedy') or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0:
+    if init not in ('kmeans', 'kmeans++', 'greedy') or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
@@ -74,7 +79,7 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     dist_scale = (X - global_center).norm(dim=1).mean().clamp_min(EPS)
     global_label = y_pred.mean(0)
     kl_scale = (entropy.squeeze(1) - y_pred @ global_label.log()).mean().clamp_min(EPS)
-    assign = (kmeans_init(X, cluster_num, seed=seed) if init == 'kmeans' else
+    assign = (kmeans_init(X, cluster_num, seed=seed, plus_plus=init == 'kmeans++') if init != 'greedy' else
               greedy_init(X, y_pred, cluster_num, kl_weight, dist_scale, kl_scale, init_block_size))
     centers = geometric_medians(X, assign, cluster_num)
     for _ in range(iters):
