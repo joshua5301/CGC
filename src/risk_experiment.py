@@ -129,7 +129,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     aware=None):
     if loss_weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
-    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware') or grip_steps < 1:
+    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware', 'risk_fro') or grip_steps < 1:
         raise ValueError('Unknown method or invalid grip_steps')
     aware = dict(aware or {})
     if method == 'gcn_aware':
@@ -158,6 +158,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
     solver.update(partition or {})
     if method == 'corrected':
         solver['objective_mode'] = 'uniform'
+    if method == 'risk_fro':
+        solver['objective_mode'] = 'frobenius'
     settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting=loss_weighting)
     output_dir, device = Path(output_dir), torch.device(device)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -288,7 +290,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     trial.set_user_attr(key, value)
                 for key in ('status', 'mass_tv', 'row_residual', 'column_residual',
                             'mass_correction', 'variance_term', 'correction_term', 'moment_term',
-                            'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max'):
+                            'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max',
+                            'covariance_fro', 'covariance_trace', 'trace_bound', 'feature_term', 'trace_to_fro'):
                     if key in condensed:
                         trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
@@ -342,6 +345,10 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             if method == 'gcn_aware':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                     ('status', 'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max')})
+            if method == 'risk_fro':
+                summaries[-1].update({k: best.user_attrs[k] for k in
+                    ('objective_name', 'covariance_fro', 'covariance_trace', 'trace_bound',
+                     'feature_term', 'moment_term', 'trace_to_fro')})
             pd.DataFrame(summaries).to_csv(output_dir / 'summary.csv', index=False)
         teacher_cache.clear()
         feature_cache.clear()

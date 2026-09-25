@@ -95,8 +95,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         raise ValueError('Require 1 <= m <= N and finite B > 0')
     if max_sweeps < 0 or block_size < 1 or min(atol, rtol) < 0:
         raise ValueError('Invalid partition solver settings')
-    if objective_mode not in ('combined', 'variance', 'uniform'):
-        raise ValueError('Require combined, variance or uniform objective')
+    if objective_mode not in ('combined', 'variance', 'uniform', 'frobenius'):
+        raise ValueError('Require combined, variance, uniform or frobenius objective')
 
     if H.is_cuda:
         torch.cuda.synchronize(H.device)
@@ -131,6 +131,11 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
     energy, moment = x2.mean(), X.T @ Q / N
     if objective_mode == 'uniform':
         moment = X.T @ (Q - 1 / K) / N
+    second_moment = X.T @ X / N if objective_mode == 'frobenius' else None
+
+    def covariance(n, s):
+        within = second_moment - (s / n[:, None]).T @ s / N
+        return (within + within.T) / 2
 
     def aggregate():
         n = torch.bincount(assignment, minlength=m).double()
@@ -146,7 +151,8 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         if objective_mode == 'uniform':
             error = moment - c.T @ (r / n[:, None] - 1 / K) / m
             correction = ((n / N - 1 / m).abs() * c.square().sum(1)).sum()
-        value = float(alpha * (variance + correction) + beta * error.norm())
+        feature_error = covariance(n, s).norm() if objective_mode == 'frobenius' else variance + correction
+        value = float(alpha * feature_error + beta * error.norm())
         if not math.isfinite(value):
             raise FloatingPointError('Nonfinite partition objective')
         return error, variance, value
@@ -165,6 +171,24 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
 
     if 0 in checkpoints:
         snapshots[0] = snapshot(0)
+
+    def check_deltas(ids, sources, delta):
+        eligible = torch.nonzero(counts[sources] > 1).flatten()[:4]
+        for local in eligible.tolist():
+            source = int(sources[local])
+            target = (source + 1) % m
+            node = ids[local]
+            next_counts, next_sums, next_labels = counts.clone(), sums.clone(), label_sums.clone()
+            next_counts[source] -= 1
+            next_counts[target] += 1
+            next_sums[source] -= X[node]
+            next_sums[target] += X[node]
+            next_labels[source] -= Q[node]
+            next_labels[target] += Q[node]
+            direct = score(next_counts, next_sums, next_labels)[2] - objective
+            if abs(float(delta[local, target]) - direct) > 1e-8 * max(1.0, abs(objective)):
+                raise FloatingPointError('Move delta disagrees with full objective recomputation')
+        return len(eligible) > 0
 
     def apply_moves(ids, destinations):
         nonlocal counts, sums, label_sums, error, variance, objective
@@ -204,22 +228,7 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                 sources = assignment[ids]
                 delta = _uniform_deltas(X, Q, ids, sources, counts, c, y, error, alpha, beta)
                 if verify_deltas and not checked:
-                    eligible = torch.nonzero(counts[sources] > 1).flatten()[:4]
-                    for local in eligible.tolist():
-                        source = int(sources[local])
-                        target = (source + 1) % m
-                        node = ids[local]
-                        next_counts, next_sums, next_labels = counts.clone(), sums.clone(), label_sums.clone()
-                        next_counts[source] -= 1
-                        next_counts[target] += 1
-                        next_sums[source] -= X[node]
-                        next_sums[target] += X[node]
-                        next_labels[source] -= Q[node]
-                        next_labels[target] += Q[node]
-                        direct = score(next_counts, next_sums, next_labels)[2] - objective
-                        if abs(float(delta[local, target]) - direct) > 1e-8 * max(1.0, abs(objective)):
-                            raise FloatingPointError('Uniform move delta disagrees with full recomputation')
-                    checked = len(eligible) > 0
+                    checked = check_deltas(ids, sources, delta)
                 delta.scatter_(1, sources[:, None], torch.inf)
                 delta[counts[sources] <= 1] = torch.inf
                 best_delta, destinations = delta.min(1)
@@ -249,8 +258,23 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                           + kb.square()[None, :] * ub2 * vb2
                           - 2 * ka[:, None] * kb[None, :] * cross_x * cross_q)
             delta_v = -ka[:, None] * ua2[:, None] + kb[None, :] * ub2
+            if objective_mode == 'frobenius':
+                within = covariance(counts, sums)
+                xs, cs = xb @ within, c @ within
+                source_quadratic = ((ua @ within) * ua).sum(1)
+                target_quadratic = ((xs * xb).sum(1)[:, None] - 2 * xs @ c.T
+                                    + (cs * c).sum(1)[None, :])
+                next_covariance_norm2 = (within.square().sum()
+                    - 2 * (ka * source_quadratic)[:, None]
+                    + 2 * kb[None, :] * target_quadratic
+                    + (ka.square() * ua2.square())[:, None]
+                    + kb.square()[None, :] * ub2.square()
+                    - 2 * ka[:, None] * kb[None, :] * cross_x.square())
+                delta_v = next_covariance_norm2.clamp_min(0).sqrt() - within.norm()
             delta = alpha * delta_v + beta * (next_norm2.clamp_min(0).sqrt()
                                               - error.norm())
+            if objective_mode == 'frobenius' and verify_deltas and not checked:
+                checked = check_deltas(ids, sources, delta)
             delta.scatter_(1, sources[:, None], torch.inf)
             delta[counts[sources] <= 1] = torch.inf
             best_delta, destinations = delta.min(1)
@@ -277,9 +301,17 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
                   moment_error=float(error.norm()), history=history,
                   moves=moves_history, sweeps=len(moves_history),
                   converged=converged, B=float(B), seed=int(seed))
-    result['seconds'] = time.perf_counter() - started
     result['objective_mode'] = objective_mode
     result['bound_J'] = B * B / 4 * result['V'] + 2 * B * result['moment_error']
+    if objective_mode == 'frobenius':
+        frobenius = float(covariance(counts, sums).norm())
+        if frobenius > float(variance) + 1e-8 * max(1.0, float(variance)):
+            raise FloatingPointError('Covariance Frobenius norm exceeds its trace')
+        result.update(objective_name='frobenius_risk_bound', covariance_fro=frobenius,
+                      covariance_trace=float(variance), trace_bound=result['bound_J'],
+                      bound_J=objective, feature_term=alpha * frobenius,
+                      moment_term=beta * result['moment_error'],
+                      trace_to_fro=float(variance) / frobenius if frobenius > 0 else 1.0)
     if objective_mode == 'uniform':
         correction = float(((counts / N - 1 / m).abs()
                             * (sums / counts[:, None]).square().sum(1)).sum())
@@ -293,4 +325,5 @@ def risk_partition(H, Q, m, B, seed=0, max_sweeps=30, block_size=1024,
         result['assignment'] = assignment.cpu()
     if checkpoints:
         result['snapshots'] = snapshots
+    result['seconds'] = time.perf_counter() - started
     return result

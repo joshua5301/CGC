@@ -290,3 +290,35 @@ and calibrated labels with uniform CE. No local training or smoke tests were run
 only AST parsing and diff checks were performed. The theoretical claims and limits
 are in [the analysis](docs/gcn_aware_improvement_analysis.md).
 
+## Covariance Frobenius risk partition
+
+`run_experiments(method="risk_fro")` optimizes
+J_F=B²||S||F/4+2B||E||F, where S is within-cell feature covariance and E is the
+original mass-weighted feature/label moment error. This replaces the scalar trace
+relaxation in the original risk method. For the same partition and B, the spectral
+bound is at most J_F, and J_F is at most the original trace bound. See
+[the tightening derivation](docs/risk_bound_tightening.md).
+
+The new mode preserves the original feature normalization, D² initialization,
+mean features/labels, fixed nonempty cell budget and moment term. It adds no new
+search parameter. B should still be selected using validation; changing the feature
+term changes its practical tradeoff. This implementation is the Frobenius variant,
+not the spectral-eigenvalue or joint trust-region variant described in the analysis.
+
+S is computed as X^T X/N minus the weighted centroid second moment in float64.
+Candidate moves use its exact rank-two Frobenius norm change and the existing
+moment-error update. Batches are accepted after full objective recomputation and
+bisected otherwise. verify_deltas=True checks the first eligible moves against full
+recomputation during Colab execution. End-of-run checks enforce ||S||F<=trace(S)
+within numerical tolerance. Keeping covariance costs O(d²) memory and additional
+matrix products, so this is more expensive than trace-only partitioning.
+
+Summary columns include covariance_fro, covariance_trace, feature_term,
+moment_term, trace_bound and trace_to_fro. feature_term+moment_term=J_final;
+trace_bound evaluates the old bound on the NEW partition, not an old experiment.
+trace_to_fro is the feature-term tightening factor at that partition. A smaller
+upper bound does not guarantee higher GCN accuracy. The original theorem's
+mass-weighted constrained-linear-student assumptions remain; evaluation defaults
+to two-layer GCN and uniform CE. Local verification was limited to AST parsing
+and diff checks. No local training, imports of model modules or smoke tests ran.
+
