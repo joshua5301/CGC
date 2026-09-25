@@ -134,7 +134,7 @@ def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_w
 
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
-              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None):
+              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100, label_weights=None, return_initial_state=False):
     if init not in ('kmeans', 'kmeans++', 'greedy') + PAIRED_INITS or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0 or feature_steps < 1:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
@@ -167,6 +167,10 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
         assign = (kmeans_init(X, cluster_num, seed=seed, plus_plus=init == 'kmeans++') if init != 'greedy' else
                   greedy_init(X, y_pred, cluster_num, kl_weight, dist_scale, kl_scale, init_block_size))
     centers = geometric_medians(X, assign, cluster_num)
+    if return_initial_state:
+        init_info.update(initial_assignment=assign.cpu().clone(),
+                         initial_x=centers.float().cpu().clone(),
+                         initial_y=label_means(assign, cluster_num).float().cpu().clone())
     if return_diagnostics:
         means = cell_means(X, assign, cluster_num)
         initial_sse = float((X - means[assign]).square().sum(1).mean())

@@ -412,3 +412,10 @@ and posterior-weighted representative labels. See [model and protocol](docs/grip
 Use `run_experiments(method="grip_distance", search="grid")` with `distance_k`
 and `distance_power` alongside the full teacher/student grid. No validation labels
 are used to estimate weights. See [protocol](docs/grip_distance.md).
+
+### Initial versus final GRIP visualization
+
+`src.grip_visualization.visualize_grip` compares two partition seeds on one shared
+t-SNE projection, saves aligned cluster plots and teacher-class allocation plots,
+and reports ARI/NMI and matched reassignment rates. No student training is run.
+See [interpretation notes](docs/grip_visualization.md).
