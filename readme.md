@@ -400,3 +400,9 @@ the original algorithm.
 Reliability grids use `k`, `alpha`, `kl_weight`, and `dropout`. There is no `tau`:
 `alpha` blends mean-one inverse-error weights with uniform weights after clipping
 and normalization. Include `alpha=0` to allow selection of the original GRIP.
+
+### Contamination-mixture GRIP
+
+`src.grip_mixture_study.run_mixture_study` compares original GRIP, rounded-label
+GRIP, and a multinomial contamination model with full mixture-cost assignments
+and posterior-weighted representative labels. See [model and protocol](docs/grip_mixture.md).
