@@ -126,7 +126,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     seed=0, epochs=1000, eval_every=10, hidden=256,
                     lr=0.01, weight_decay=5e-4, device='cuda', method='risk',
                     grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
-                    aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna'):
+                    aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna',
+                    grip_seed=1234):
     if search not in ('optuna', 'grid'):
         raise ValueError('Unknown search method')
     if search == 'grid' and (not space or any(not isinstance(v, (list, tuple)) or not v for v in space.values())):
@@ -218,6 +219,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             protocol = dict(version=3, revision=revision, torch=str(torch.__version__),
                             method=method, grip_steps=grip_steps, evaluate_test=evaluate_test,
                             grip_init=grip_init, grip_init_block_size=grip_init_block_size,
+                            grip_seed=grip_seed,
                             initial_configs=initial_configs,
                             aware=aware,
                             dataset=name, ratio=ratio, budget=m, data_dir=str(data_dir),
@@ -266,7 +268,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     started = time.perf_counter()
                     x, y, assignment, converged = grip_partition(
                         H, Q, m, kl_weight=params['kl_weight'], iters=grip_steps,
-                        return_state=True, seed=seed, init=grip_init,
+                        return_state=True, seed=grip_seed, init=grip_init,
                         init_block_size=grip_init_block_size)
                     condensed = dict(x=x.float().cpu(), y=y.float().cpu(),
                                      counts=torch.bincount(assignment).cpu(),
@@ -354,6 +356,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 partition_seconds=best.user_attrs['partition_seconds'], folder=str(case)))
             if method == 'grip':
                 summaries[-1]['grip_init'] = grip_init
+                summaries[-1]['grip_seed'] = grip_seed
             if method == 'transport':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                                       ('status', 'mass_tv', 'row_residual', 'column_residual')})

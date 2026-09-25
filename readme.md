@@ -324,6 +324,13 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+GRIP sweeps use `grip_seed=1234` by default, matching the implicit FAISS seed
+in the original `main.py` path. Earlier sweeps passed the experiment seed
+(usually 0) into FAISS instead. Set `grip_seed=0` to reproduce those sweeps.
+Teacher generation still uses `seed`; student runs use their explicit seed
+lists. Greedy initialization is deterministic for fixed features and labels
+and does not use `grip_seed`. The protocol and summary record this setting.
+
 For exhaustive search use `run_experiments(..., search='grid', space=GRID)`.
 Every value in `GRID` must be a nonempty list. All Cartesian-product combinations
 are evaluated; `n_trials` does not limit grid search. This path does not import
