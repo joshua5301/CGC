@@ -324,6 +324,10 @@ and diff checks. No local training, imports of model modules or smoke tests ran.
 
 # GRIP-cost greedy initialization
 
+Paired feature initialization experiments support `uniform_kmeans`,
+`uniform_kmedians`, `distance_kmeans`, and `distance_kmedians`.
+See [paired K-medians protocol](docs/kmedians_initialization.md).
+
 `src.initialization_study.run_initialization_study` compares random selection,
 minimum feature SSE, and minimum final GRIP cost across multiple initializations.
 It saves cost diagnostics and separate discovery/confirmation validation runs.

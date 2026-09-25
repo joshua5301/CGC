@@ -3,6 +3,62 @@ import torch
 from sklearn.cluster import kmeans_plusplus
 
 EPS = 1e-12
+PAIRED_INITS = ('uniform_kmeans', 'uniform_kmedians', 'distance_kmeans', 'distance_kmedians')
+
+
+@torch.no_grad()
+def seed_centers(X, cluster_num, seed, distance_sampling):
+    generator = torch.Generator(device=X.device).manual_seed(seed)
+    if not distance_sampling:
+        return torch.randperm(len(X), generator=generator, device=X.device)[:cluster_num]
+    selected = torch.zeros(len(X), dtype=torch.bool, device=X.device)
+    nearest = X.new_full((len(X),), torch.inf)
+    indices = []
+    for _ in range(cluster_num):
+        weights = nearest.masked_fill(selected, 0) if indices else (~selected).to(X.dtype)
+        if float(weights.sum()) == 0:
+            weights = (~selected).to(X.dtype)
+        index = int(torch.multinomial(weights, 1, generator=generator))
+        indices.append(index)
+        selected[index] = True
+        nearest = torch.minimum(nearest, (X - X[index]).norm(dim=1))
+    return torch.tensor(indices, device=X.device)
+
+
+@torch.no_grad()
+def paired_feature_init(X, cluster_num, seed, init, steps=100):
+    indices = seed_centers(X, cluster_num, seed, init.startswith('distance_'))
+    centers, previous = X[indices].clone(), None
+    median = init.endswith('kmedians')
+    for step in range(steps):
+        distances, assignments = [], []
+        for chunk in X.split(2048):
+            distance, assignment = torch.cdist(chunk, centers).min(1)
+            distances.append(distance)
+            assignments.append(assignment)
+        assignment, residual = torch.cat(assignments), torch.cat(distances)
+        counts = torch.bincount(assignment, minlength=cluster_num)
+        for empty in torch.nonzero(counts == 0).flatten().tolist():
+            node = int(residual.masked_fill(counts[assignment] <= 1, -torch.inf).argmax())
+            counts[assignment[node]] -= 1
+            assignment[node] = empty
+            counts[empty] += 1
+        if previous is not None and torch.equal(previous, assignment):
+            return assignment, indices, dict(feature_steps=step + 1, feature_converged=True)
+        means = cell_means(X, assignment, cluster_num)
+        if median:
+            proposed = geometric_medians(X, assignment, cluster_num)
+            old_cost = X.new_zeros(cluster_num).index_add_(0, assignment, (X - centers[assignment]).norm(dim=1))
+            new_cost = X.new_zeros(cluster_num).index_add_(0, assignment, (X - proposed[assignment]).norm(dim=1))
+            mean_cost = X.new_zeros(cluster_num).index_add_(0, assignment, (X - means[assignment]).norm(dim=1))
+            use_mean = mean_cost < new_cost
+            proposed[use_mean] = means[use_mean]
+            new_cost = torch.minimum(new_cost, mean_cost)
+            centers = torch.where((new_cost <= old_cost)[:, None], proposed, centers)
+        else:
+            centers = means
+        previous = assignment.clone()
+    return assignment, indices, dict(feature_steps=steps, feature_converged=False)
 
 def kmeans_init(X: torch.Tensor, cluster_num: int, seed=1234, plus_plus=False):
     X_np = X.detach().cpu().numpy().astype('float32')
@@ -77,8 +133,8 @@ def partition_cost(X, Q, assignment, centers, labels, dist_scale, kl_scale, kl_w
 
 
 def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight=0.5, iters=100, return_state=False, seed=1234,
-              init='kmeans', init_block_size=256, return_diagnostics=False):
-    if init not in ('kmeans', 'kmeans++', 'greedy') or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0:
+              init='kmeans', init_block_size=256, return_diagnostics=False, feature_steps=100):
+    if init not in ('kmeans', 'kmeans++', 'greedy') + PAIRED_INITS or not 1 <= cluster_num <= len(X) or init_block_size < 1 or kl_weight < 0 or feature_steps < 1:
         raise ValueError('Invalid GRIP initialization or clustering settings')
     X, y_pred = X.double(), y_pred.double().clamp(min=EPS)
     entropy = (y_pred * y_pred.log()).sum(1, keepdim=True)
@@ -87,8 +143,13 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
     dist_scale = (X - global_center).norm(dim=1).mean().clamp_min(EPS)
     global_label = y_pred.mean(0)
     kl_scale = (entropy.squeeze(1) - y_pred @ global_label.log()).mean().clamp_min(EPS)
-    assign = (kmeans_init(X, cluster_num, seed=seed, plus_plus=init == 'kmeans++') if init != 'greedy' else
-              greedy_init(X, y_pred, cluster_num, kl_weight, dist_scale, kl_scale, init_block_size))
+    init_info = {}
+    if init in PAIRED_INITS:
+        assign, indices, init_info = paired_feature_init(X, cluster_num, seed, init, feature_steps)
+        init_info['initial_centroid_ids'] = indices.cpu()
+    else:
+        assign = (kmeans_init(X, cluster_num, seed=seed, plus_plus=init == 'kmeans++') if init != 'greedy' else
+                  greedy_init(X, y_pred, cluster_num, kl_weight, dist_scale, kl_scale, init_block_size))
     centers = geometric_medians(X, assign, cluster_num)
     if return_diagnostics:
         means = cell_means(X, assign, cluster_num)
@@ -122,7 +183,7 @@ def partition(X: torch.Tensor, y_pred: torch.Tensor, cluster_num: int, kl_weight
                     **{f'initial_{k}': v for k, v in initial.items()},
                     **{f'final_{k}': v for k, v in final.items()},
                     dist_scale=float(dist_scale), kl_scale=float(kl_scale),
-                    converged=moved == 0)
+                    converged=moved == 0, **init_info)
     if return_state:
         return X_cond, y_cond, assign, moved == 0
     return X_cond, y_cond
