@@ -454,3 +454,8 @@ outputs to compare S²X, multiscale propagation, exact probability OT, and
 neighborhood kernel mean embeddings. It reports mass-weighted CE preservation,
 paired differences, fixed-representative controls, and plots without retraining.
 See [the four-distance comparison](docs/node_distance_comparison.md).
+
+`src.local_ce_distance.run_local_ce_comparison` evaluates nearby pairs directly,
+without selecting representatives. It uses disjoint calibration/evaluation nodes,
+distance quantiles and per-node k-NN, reporting CE-change means/tails and separately
+calibrated distance prediction errors. See [the local protocol](docs/local_ce_distance.md).
