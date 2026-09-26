@@ -69,3 +69,38 @@ differ, or preservation of training gradients.
 The tests in `tests/test_gnn_distance_probe.py` cover distance-scale invariance,
 common-logit-offset invariance, zero-distance violations, collapsed outputs,
 and the three model interfaces. Run them in Colab before the experiment.
+
+## Saved-output diagnosis
+
+`src.gnn_distance_diagnostics.analyze_saved_probe` reads existing prediction
+files and verified distance caches, without training or accessing labels.
+It measures centered-logit direction (one minus cosine similarity), magnitude
+differences, and probability TV, each relative to the all-pair mean. Direction
+is undefined for zero centered logits; those pairs are excluded and their
+coverage is reported. Positive per-node scaling cannot change direction.
+
+For centered logits z_i = r_i u_i, the exact decomposition is
+
+    ||z_i - z_j||² = (r_i - r_j)² + 2 r_i r_j (1 - <u_i, u_j>).
+
+The two contributions are divided by the same all-pair mean squared logit
+gap. Their sum is the neighbor mean squared gap relative to the all-pair
+mean squared gap; it is not the original unsquared relative-gap metric.
+The angular contribution still depends on magnitudes. Use the separate
+direction metric to remove that dependence.
+
+Initial/trained changes are paired on architecture and model initialization.
+Initial predictions are shared across subset seeds, so delta standard
+deviations are descriptive, not independent-sample confidence intervals.
+Negative delta means that neighborhoods became more selective for similar
+outputs relative to all pairs; it need not mean absolute gaps decreased.
+
+The report also includes per-run norms, confidence, entropy, train CE,
+degree correlations, and all pairs below a normalized distance tolerance
+(default 1e-8), distinguishing exact zeros. Raw output gaps, probability
+gaps and prediction disagreement allow inspection of numerical near-zeros.
+A nonzero gap by itself is not a certified counterexample: cache precision,
+graph conventions and applicable model assumptions still matter.
+
+Degree correlations and direction/magnitude decomposition are diagnostic,
+not causal evidence. No held-out labels or model selection are introduced.
