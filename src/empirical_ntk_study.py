@@ -33,10 +33,10 @@ def gram_distance(gram):
     return distance
 
 
-def make_network(x, edges, architecture, width, outputs, seed):
+def make_network(x, edges, architecture, width, outputs, seed, dropout=0.):
     with torch.random.fork_rng():
         torch.manual_seed(seed)
-        model = ProbeGNN(architecture, x.shape[1], width, outputs, dropout=0.).to(x.device).eval()
+        model = ProbeGNN(architecture, x.shape[1], width, outputs, dropout=dropout).to(x.device).eval()
         with torch.no_grad():
             model(x, edges)
     return model

@@ -482,3 +482,8 @@ student architectures remain included. See [protocol and compute requirements](d
 `src.ntk_readout_study.run_readout_study` compares pre-readout features, exact
 readout-only NTK and the full NTK on those same cached network initializations.
 See [the decomposition and architecture-specific features](docs/ntk_readout_study.md).
+
+`src.student_matched_kernel.run_student_matched_kernel` reads the original
+student architecture settings automatically and verifies them by reproducing
+cached initial logits before constructing independent-seed kernels.
+See [scope of student alignment](docs/student_matched_kernel.md).
