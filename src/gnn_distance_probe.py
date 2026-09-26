@@ -48,7 +48,8 @@ def fit_probe(x, edges, train_ids, train_labels, probe_ids, model, classes, seed
     seed_everything(seed)
     network = ProbeGNN(model, x.shape[1], hidden, classes, dropout).to(x.device)
     ids = torch.as_tensor(train_ids, device=x.device, dtype=torch.long)
-    labels = torch.as_tensor(train_labels, device=x.device, dtype=torch.long)
+    labels = torch.as_tensor(train_labels, device=x.device,
+                             dtype=x.dtype if np.asarray(train_labels).ndim == 2 else torch.long)
     queries = torch.as_tensor(probe_ids, device=x.device, dtype=torch.long)
     network.eval()
     with torch.no_grad():
@@ -66,7 +67,8 @@ def fit_probe(x, edges, train_ids, train_labels, probe_ids, model, classes, seed
     with torch.no_grad():
         output = network(x, edges)
         trained = output[queries].cpu().numpy()
-        train_accuracy = float((output[ids].argmax(1) == labels).float().mean())
+        targets = labels.argmax(1) if labels.ndim == 2 else labels
+        train_accuracy = float((output[ids].argmax(1) == targets).float().mean())
         train_ce = float(F.cross_entropy(output[ids], labels))
     if not np.isfinite(initial).all() or not np.isfinite(trained).all():
         raise FloatingPointError('Nonfinite probe logits')
@@ -167,12 +169,18 @@ def run_gnn_distance_probe(x, edge_index, y, train_mask, propagated_features, ra
                            models=('gcn', 'sage', 'gin'), subset_seeds=(0, 1, 2, 3, 4),
                            model_seeds=(100, 101), probe_nodes=512, probe_seed=2026,
                            depths=(1, 2, 3), ks=(1, 5, 10, 20), hidden=128, dropout=.5,
-                           epochs=300, lr=.01, weight_decay=5e-4, device='cuda'):
+                           epochs=300, lr=.01, weight_decay=5e-4, device='cuda',
+                           pseudo_labels=None, teacher_config=None):
     x, edges, y = np.asarray(x), np.asarray(edge_index), np.asarray(y)
     train_mask = np.asarray(train_mask, dtype=bool)
     if train_mask.shape != (len(x),):
         raise ValueError('Training mask shape mismatch')
     pool, unlabeled = np.flatnonzero(train_mask), np.flatnonzero(~train_mask)
+    if pseudo_labels is not None:
+        pseudo_labels = np.asarray(pseudo_labels, dtype=np.float32)
+        if pseudo_labels.ndim != 2 or len(pseudo_labels) != len(x) or not np.isfinite(pseudo_labels).all() or (pseudo_labels < 0).any() or not np.allclose(pseudo_labels.sum(1), 1):
+            raise ValueError('Require one probability vector per graph node')
+        pool = np.arange(len(x))
     if not train_sizes or any(int(n) != n or n < 1 or n > len(pool) for n in train_sizes):
         raise ValueError('Training sizes must be between 1 and the original training-pool size')
     if not 2 <= probe_nodes <= len(unlabeled) or epochs < 1 or hidden < 1 or not 0 <= dropout < 1 or lr <= 0 or weight_decay < 0:
@@ -181,8 +189,8 @@ def run_gnn_distance_probe(x, edge_index, y, train_mask, propagated_features, ra
         raise ValueError('Require gcn/sage/gin and nonempty seed lists')
     if not ks or any(int(k) != k or not 1 <= k < probe_nodes for k in ks):
         raise ValueError('Invalid neighborhood k')
-    classes = np.unique(y[pool])
-    pool_labels = np.searchsorted(classes, y[pool])
+    classes = np.unique(y[pool]) if pseudo_labels is None else np.arange(pseudo_labels.shape[1])
+    pool_labels = np.searchsorted(classes, y[pool]) if pseudo_labels is None else pseudo_labels
     probe_ids = np.sort(np.random.default_rng(probe_seed).choice(unlabeled, probe_nodes, replace=False))
     h = np.asarray(propagated_features)
     if h.ndim != 2 or len(h) != len(x) or not np.isfinite(h).all():
@@ -204,6 +212,12 @@ def run_gnn_distance_probe(x, edge_index, y, train_mask, propagated_features, ra
                   graph='full_original_graph', supervision='uniform_ce_on_sampled_training_nodes',
                   checkpoint='fixed_final_epoch_without_validation', normalization='fixed_pair_median',
                   probe_pool='outside_entire_original_training_pool', labels_outside_training_used=False)
+    config.update(sampling_pool='all_nodes' if pseudo_labels is not None else 'original_training_nodes',
+                  target_kind='teacher_soft_labels' if pseudo_labels is not None else 'ground_truth',
+                  teacher=teacher_config)
+    if pseudo_labels is not None:
+        config['supervision'] = 'uniform_soft_ce_on_sampled_graph_nodes'
+        config['labels_outside_training_used'] = bool((teacher_config or {}).get('validation_selection', False))
     key = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:12]
     output = Path(output_dir) / key
     output.mkdir(parents=True, exist_ok=True)
@@ -225,6 +239,7 @@ def run_gnn_distance_probe(x, edge_index, y, train_mask, propagated_features, ra
                 selected = np.random.default_rng(subset_seed).permutation(len(pool))[:size]
                 selected = selected[np.argsort(pool[selected])]
                 train_ids, labels = pool[selected], pool_labels[selected]
+                hard_labels = labels.argmax(1) if labels.ndim == 2 else labels
                 for model in models:
                     for model_seed in model_seeds:
                         metadata = dict(train_size=size, subset_seed=subset_seed, model=model, model_seed=model_seed)
@@ -237,11 +252,12 @@ def run_gnn_distance_probe(x, edge_index, y, train_mask, propagated_features, ra
                             temporary = path.with_suffix('.tmp')
                             with temporary.open('wb') as handle:
                                 np.savez_compressed(handle, **result, train_ids=train_ids,
-                                                    class_counts=np.bincount(labels, minlength=len(classes)))
+                                                    class_counts=np.bincount(hard_labels, minlength=len(classes)))
                             temporary.replace(path)
                         runs.append(dict(**metadata, train_accuracy=100 * float(result['train_accuracy']),
                                          train_ce=float(result['train_ce']),
-                                         represented_classes=int(len(np.unique(labels)))))
+                                         represented_classes=int(len(np.unique(hard_labels))),
+                                         probe_training_overlap=int(np.isin(probe_ids, train_ids).sum())))
                         for phase in ('initial', 'trained'):
                             initial_key = (size, model, model_seed)
                             if phase == 'initial':

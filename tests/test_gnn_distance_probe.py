@@ -51,10 +51,12 @@ def test_close_pairs_measure_output_similarity_not_labels():
 
 
 @pytest.mark.parametrize('model', ['gcn', 'sage', 'gin'])
-def test_models_train_with_only_selected_labels(model):
+@pytest.mark.parametrize('soft', [False, True])
+def test_models_train_with_only_selected_labels(model, soft):
     x = torch.tensor([[1., 0.], [0., 1.], [1., 1.], [.2, .4]])
     edges = torch.tensor([[0, 1, 1, 2, 2, 3], [1, 0, 2, 1, 3, 2]])
-    result = fit_probe(x, edges, np.array([0, 1]), np.array([0, 1]), np.array([2, 3]),
+    labels = np.array([[.8, .2], [.1, .9]]) if soft else np.array([0, 1])
+    result = fit_probe(x, edges, np.array([0, 1]), labels, np.array([2, 3]),
                        model, 2, 7, hidden=4, dropout=0., epochs=2)
     assert result['initial'].shape == result['trained'].shape == (2, 2)
     assert np.isfinite(result['trained']).all()

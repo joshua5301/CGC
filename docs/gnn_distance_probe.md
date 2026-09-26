@@ -104,3 +104,27 @@ graph conventions and applicable model assumptions still matter.
 
 Degree correlations and direction/magnitude decomposition are diagnostic,
 not causal evidence. No held-out labels or model selection are introduced.
+
+## Full-node sampling with GRIP teacher targets
+
+`src.probe_teacher.tune_probe_teacher` fits the existing GRIP kernel logistic
+teacher on S²X using only original training labels. Kernel features are shared
+across the gamma grid. Select gamma by validation accuracy only; ties choose
+the smallest gamma. Kernel, basis and seed are fixed. No test labels are read
+and no training+validation refit is performed. The selected model supplies
+soft labels at fixed T=1 for every node, including original training nodes;
+there is no ground-truth override.
+
+Pass these probabilities as `pseudo_labels` and the returned configuration as
+`teacher_config` to `run_gnn_distance_probe`. Students sample without replacement
+from ALL graph nodes, with the same selections across architectures. Loss is
+uniform soft-target CE. Reported train accuracy now means agreement with the
+teacher argmax, not ground-truth accuracy. The target array enters the cache
+hash, and teacher selection provenance is saved in the protocol.
+
+The fixed probe pool remains outside the original training pool, matching the
+previous experiment. It may overlap student supervision drawn from all nodes;
+`probe_training_overlap` reports that count. This is output preservation on
+the graph, not a held-out student-generalization score. Unlike the original
+hard-label protocol, validation labels ARE used for teacher gamma selection.
+Saved-output diagnostics work unchanged and do not retrain any model.
