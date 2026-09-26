@@ -51,3 +51,26 @@ reconstruction-error iterate, without accuracy feedback. Raw and S²X runs have
 separate cache identities; existing S²X caches remain usable. Run each mode
 with the same student seeds and compare both raw-minus-S²X paired accuracies
 and the per-space convex-minus-median differences.
+
+## Nearest-centroid candidate pools
+
+For raw mixtures, candidate_mode='nearest_size' chooses as many nearest nodes
+as the original cluster size; candidate_mode='nearest_k' chooses candidate_k
+nodes for every representative. Defaults remain candidate_mode='cluster'.
+Distances are Euclidean in the original-graph teacher readout-input space to
+the frozen hidden centers. Exact search uses centroid blocks, and ties prefer
+lower original node IDs. No labels or student accuracy enter candidate search.
+
+Candidates may overlap across representatives: each occurrence has an
+independent convex coefficient. Source raw features are expanded by the saved
+candidate node IDs, and group indices identify which representative owns each
+occurrence. The existing grouped-softmax Adam solver and median initialization
+are unchanged. Target centers and original cluster mean labels are unchanged;
+this is not a balanced partition and does not recompute labels on candidate pools.
+
+Each case saves its optimized representatives, coefficients, candidate node/group
+IDs, a median control, reconstruction history, paired student results, and
+candidates.json with candidate counts, coverage, maximum reuse and fraction
+outside original clusters. Existing cluster/raw result hashes remain compatible.
+Run tests/test_centroid_candidates.py in Colab to check exact membership, stable
+ties, variable counts, and independent coefficients for overlapping pools.

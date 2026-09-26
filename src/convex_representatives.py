@@ -82,7 +82,11 @@ def fit_convex_representatives(model, h, assignment, targets, baseline, steps=10
 
 def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1000, lr=.05,
                                     seeds=tuple(range(100, 110)), data_dir='/content/data/', device='cuda',
-                                    feature_source='s2x'):
+                                    feature_source='s2x', candidate_mode='cluster', candidate_k=256):
+    if candidate_mode not in ('cluster', 'nearest_size', 'nearest_k'):
+        raise ValueError('Require cluster, nearest_size or nearest_k candidates')
+    if candidate_mode != 'cluster' and feature_source != 'raw':
+        raise ValueError('Nearest-candidate comparison uses raw X mixtures')
     if feature_source not in ('s2x', 'raw'):
         raise ValueError('Require s2x or raw mixture features')
     if not seeds or len(set(seeds)) != len(seeds):
@@ -111,9 +115,22 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
         raise ValueError('Teacher weights differ from the partition teacher')
     train, _, validation, testing, h = _prepare_dataset(dataset, data_dir, device)
     targets, baseline = state['metric_centers'].to(device), state['x'].to(device)
+    groups = state['assignment'].to(device)
+    nodes = torch.arange(len(h), device=device)
     if feature_source == 'raw':
         h = train['x']
-        baseline = geometric_medians(h.double(), state['assignment'].to(device), state['nodes']).float()
+        if candidate_mode != 'cluster':
+            from src.centroid_candidates import nearest_candidates
+            from src.ntk_readout_study import readout_features
+
+            features, _, _, _ = readout_features(model, graph.x.to(device), graph.edge_index.to(device), 'gcn')
+            sizes = state['counts'] if candidate_mode == 'nearest_size' else [candidate_k] * state['nodes']
+            nodes, groups = nearest_candidates(features, targets, sizes)
+            h = h[nodes]
+        baseline = geometric_medians(h.double(), groups, state['nodes']).float()
+    from src.centroid_candidates import candidate_statistics
+
+    candidate_info = candidate_statistics(nodes, groups, state['assignment'].to(device))
     config = dict(version=1, source=str(source), source_protocol=protocol, params=params,
                   partition=array_digest(state['assignment'].numpy(), state['x'].numpy(),
                                          state['y'].numpy(), state['metric_centers'].numpy()),
@@ -121,15 +138,21 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
                   initialization='geometric_median_coefficients', torch=str(torch.__version__), device=str(device))
     if feature_source != 's2x':
         config['feature_source'] = feature_source
+    if candidate_mode != 'cluster':
+        config['candidates'] = dict(mode=candidate_mode, k=candidate_k if candidate_mode == 'nearest_k' else None,
+                                    ids=array_digest(nodes.cpu().numpy(), groups.cpu().numpy()), metric='teacher_hidden_euclidean')
     folder = Path(output_dir) / _fingerprint(config)
     folder.mkdir(parents=True, exist_ok=True)
     _write_json(folder / 'protocol.json', config)
     _write_json(folder / 'teacher_recovery.json', recovery)
+    _write_json(folder / 'candidates.json', candidate_info)
     path = folder / 'convex.pt'
     if path.exists():
         fitted = torch.load(path, map_location='cpu', weights_only=True)
     else:
-        fitted = fit_convex_representatives(model, h, state['assignment'], targets, baseline, steps, lr)
+        fitted = fit_convex_representatives(model, h, groups, targets, baseline, steps, lr)
+        if candidate_mode != 'cluster':
+            fitted.update(candidate_nodes=nodes.cpu(), candidate_groups=groups.cpu())
         fitted.pop('history').to_csv(folder / 'reconstruction_history.csv', index=False)
         temporary = path.with_suffix('.tmp')
         torch.save(fitted, temporary)
@@ -154,7 +177,9 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
             rows.append(record)
         table = pd.DataFrame(rows)
         detail.extend(rows)
-        summaries.append(dict(method=method, feature_source=feature_source, dataset=dataset, ratio=protocol['ratio'], nodes=len(cx),
+        summaries.append(dict(method=method, feature_source=feature_source, candidate_mode=candidate_mode,
+                              candidate_k=candidate_k if candidate_mode == 'nearest_k' else None,
+                              **candidate_info, dataset=dataset, ratio=protocol['ratio'], nodes=len(cx),
                               reconstruction_mse=float(per_cluster.mean()), final_val=table.validation.mean(),
                               final_val_std=table.validation.std(ddof=0), test_mean=table.test.mean(),
                               test_std=table.test.std(ddof=0)))
@@ -166,7 +191,7 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
                          ('cluster_errors', cluster_errors)]:
         table.to_csv(folder / f'{name}.csv', index=False)
     weights = fitted['weights']
-    sums = torch.zeros(len(targets), dtype=weights.dtype).index_add_(0, state['assignment'], weights)
+    sums = torch.zeros(len(targets), dtype=weights.dtype).index_add_(0, groups.cpu(), weights)
     diagnostics = dict(best_step=fitted['best_step'], min_weight=float(weights.min()),
                        coefficient_sum_error=float((sums - 1).abs().max()))
     _write_json(folder / 'diagnostics.json', diagnostics)
