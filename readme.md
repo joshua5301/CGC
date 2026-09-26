@@ -487,3 +487,7 @@ See [the decomposition and architecture-specific features](docs/ntk_readout_stud
 student architecture settings automatically and verifies them by reproducing
 cached initial logits before constructing independent-seed kernels.
 See [scope of student alignment](docs/student_matched_kernel.md).
+
+`src.trained_teacher_kernel.run_teacher_kernel_study` compares the original
+GCN teacher's initial and trained hidden/NTK distances, verifying the checkpoint
+against saved teacher probabilities. See [checkpoint recovery and interpretation](docs/trained_teacher_kernel.md).
