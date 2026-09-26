@@ -108,3 +108,12 @@ hidden centers; changing labels does not change that optimizer. Temperature is
 applied before mixing. Mean labels are retained as cluster_mean_y in the saved
 partition; y stores the actual student targets. Uniform student CE is unchanged.
 The label rule has a separate protocol hash, preserving all earlier caches.
+
+Set loss_weighting='mass' for student CE weighted by original cluster counts
+n_j/sum_j n_j. Counts are supplied during both validation search and final
+student training. Uniform remains the default and its protocol hashes are
+unchanged. Mixture-label coefficients operate inside each representative's
+target, whereas mass weighting operates across representatives. Teacher
+training, GRIP partitioning, and reconstruction loss are unchanged. With mixture
+labels this does not exactly reproduce uniform all-node teacher CE, since
+original node weights become (n_j/N)*alpha_ji rather than 1/N.

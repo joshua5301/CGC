@@ -65,7 +65,9 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                             epochs=1000, eval_every=10, hidden=256, device='cuda',
                             gradient_projections=512, gradient_seeds=(6000, 7000), dataset='cora',
                             representative='s2x_median', reconstruction_steps=1000, reconstruction_lr=.05,
-                            representative_labels='cluster_mean'):
+                            representative_labels='cluster_mean', loss_weighting='uniform'):
+    if loss_weighting not in ('uniform', 'mass'):
+        raise ValueError('Require uniform or mass student CE')
     if representative_labels not in ('cluster_mean', 'mixture_mean'):
         raise ValueError('Require cluster_mean or mixture_mean labels')
     if representative_labels == 'mixture_mean' and representative != 'raw_convex':
@@ -116,7 +118,7 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
     features, logits, _, _ = readout_features(model, tx, te, 'gcn')
     _, _, validation, testing, h = _prepare_dataset(dataset, data_dir, device)
     embeddings = dict(s2x=h, hidden=features.detach(), logits=logits.detach())
-    settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting='uniform')
+    settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting=loss_weighting)
     config = dict(version=1, dataset=dataset, ratio=ratio, requested_nodes=BUDGET[dataset, ratio],
                   teacher=teacher, teacher_state=array_digest(*[p.cpu().numpy() for p in model.state_dict().values()]),
                   graph=array_digest(x, edges, graph.y.numpy(), graph.train_mask.numpy(),
@@ -186,7 +188,7 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
         def objective(trial):
             state = condensed(mode, trial.params)
             cx, cy = state['x'].to(device), state['y'].to(device)
-            values = [_train_student(cx, cy, validation, trial.params, seed, settings)[0]
+            values = [_train_student(cx, cy, validation, trial.params, seed, settings, counts=state['counts'])[0]
                       for seed in search_seeds]
             trial.set_user_attr('validation_per_seed', values)
             trial.set_user_attr('nodes', state['nodes'])
@@ -208,14 +210,15 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
             if path.exists():
                 record = json.loads(path.read_text())
             else:
-                val, test, epoch = _train_student(cx, cy, validation, best.params, seed, settings, testing=testing)
+                val, test, epoch = _train_student(cx, cy, validation, best.params, seed, settings,
+                                                  testing=testing, counts=state['counts'])
                 record = dict(mode=mode, seed=seed, validation=100 * val, test=100 * test, epoch=epoch)
                 _write_json(path, record)
             mode_rows.append(record)
         frame = pd.DataFrame(mode_rows)
         repeats.extend(mode_rows)
         rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, representative=representative,
-                         representative_labels=representative_labels, nodes=state['nodes'],
+                         representative_labels=representative_labels, loss_weighting=loss_weighting, nodes=state['nodes'],
                          requested_nodes=config['requested_nodes'], **best.params,
                          search_val=100 * best.value, final_val=frame.validation.mean(),
                          final_val_std=frame.validation.std(ddof=0), test_mean=frame.test.mean(),
