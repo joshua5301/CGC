@@ -64,7 +64,12 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                             grip_seed=1234, grip_steps=300, grip_init='kmeans',
                             epochs=1000, eval_every=10, hidden=256, device='cuda',
                             gradient_projections=512, gradient_seeds=(6000, 7000), dataset='cora',
-                            representative='s2x_median', reconstruction_steps=1000, reconstruction_lr=.05):
+                            representative='s2x_median', reconstruction_steps=1000, reconstruction_lr=.05,
+                            representative_labels='cluster_mean'):
+    if representative_labels not in ('cluster_mean', 'mixture_mean'):
+        raise ValueError('Require cluster_mean or mixture_mean labels')
+    if representative_labels == 'mixture_mean' and representative != 'raw_convex':
+        raise ValueError('Mixture labels require raw convex representatives')
     if representative not in ('s2x_median', 'raw_convex'):
         raise ValueError('Require s2x_median or raw_convex representatives')
     if representative == 'raw_convex' and (list(modes) != ['hidden'] or reconstruction_steps < 1 or reconstruction_lr <= 0):
@@ -125,6 +130,8 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
         config['realization'] = 'within_cluster_raw_convex'
         config['reconstruction'] = dict(steps=reconstruction_steps, lr=reconstruction_lr, optimizer='Adam',
                                        initialization='raw_geometric_median', selection='lowest_hidden_reconstruction_error')
+    if representative_labels != 'cluster_mean':
+        config['representative_labels'] = representative_labels
     if 'full_gradient' in modes:
         from src.teacher_gradient_features import full_gradient_features
 
@@ -153,6 +160,12 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
 
             reconstruction, history = reconstruct_raw_partition(model, tx, state, reconstruction_steps, reconstruction_lr)
             state.update(reconstruction)
+            if representative_labels == 'mixture_mean':
+                from src.mixture_label_study import mixture_labels
+
+                state['cluster_mean_y'] = state['y']
+                state['y'] = mixture_labels(labels, state['assignment'], state['convex_weights'], state['nodes']).cpu()
+                state['mean_label_l1'] = float((state['y'] - state['cluster_mean_y']).abs().sum(1).mean())
             history.to_csv(folder / f'reconstruction_{key}.csv', index=False)
         else:
             state['x'] = state['x'] if mode == 's2x' else realize_partition(h, state).cpu()
@@ -201,7 +214,8 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
             mode_rows.append(record)
         frame = pd.DataFrame(mode_rows)
         repeats.extend(mode_rows)
-        rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, representative=representative, nodes=state['nodes'],
+        rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, representative=representative,
+                         representative_labels=representative_labels, nodes=state['nodes'],
                          requested_nodes=config['requested_nodes'], **best.params,
                          search_val=100 * best.value, final_val=frame.validation.mean(),
                          final_val_std=frame.validation.std(ddof=0), test_mean=frame.test.mean(),
@@ -210,6 +224,8 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                          partition_seconds=state['partition_seconds']))
         if representative == 'raw_convex':
             rows[-1].update({key: state[key] for key in ('reconstruction_initial', 'reconstruction_final', 'reconstruction_best_step')})
+        if representative_labels == 'mixture_mean':
+            rows[-1]['mean_label_l1'] = state['mean_label_l1']
     summary, detail = pd.DataFrame(rows), pd.DataFrame(repeats)
     summary.to_csv(folder / 'summary.csv', index=False)
     detail.to_csv(folder / 'final_seeds.csv', index=False)

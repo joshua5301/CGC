@@ -100,3 +100,11 @@ selection. Per-partition histories and coefficients are saved; summary includes
 initial/final reconstruction error and selected step. Old median experiment
 hashes are unchanged. Expanded search ranges make comparisons to older winners
 descriptive; strict search-budget comparisons require matching grids.
+
+Set representative_labels='mixture_mean' with representative='raw_convex' to
+use each partition's learned convex coefficients to mix its teacher probabilities
+before every student validation trial. Reconstruction still targets the frozen
+hidden centers; changing labels does not change that optimizer. Temperature is
+applied before mixing. Mean labels are retained as cluster_mean_y in the saved
+partition; y stores the actual student targets. Uniform student CE is unchanged.
+The label rule has a separate protocol hash, preserving all earlier caches.
