@@ -427,3 +427,10 @@ features, then a small graph with raw-dimensional features is reconstructed for
 the existing two-layer GCN. Grid keys include `fsw_depth`, `fsw_width`, and
 `fsw_frequency`; fixed reconstruction options go in `fsw`.
 See [the method and theoretical limitations](docs/fsw_grip.md).
+
+## Exact computation-tree distances
+
+`src.tree_distance.exact_tree_distances` builds full node-to-node tree distance
+matrices using exact assignment with blank-tree padding and unnormalized costs.
+It includes per-depth CPU timing probes, memory-mapped arrays, and row checkpoints.
+See [the distance definition and restart protocol](docs/exact_tree_distance.md).
