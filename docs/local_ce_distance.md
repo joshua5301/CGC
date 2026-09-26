@@ -7,6 +7,13 @@ and the original frozen student logits. It adds the matched mean embedding
 probability OT. No student training, OT recomputation, or representative selection
 is performed. Source graph, teacher and student fingerprints are checked.
 
+Local analysis now includes all architectures listed in the original saved probe
+by default, including GIN even if the intermediate representative comparison
+only evaluated GCN/SAGE. Optional `models` restricts this explicitly. Additional
+distance matrices can be passed without replacing existing comparators; their
+hashes and construction metadata enter the result protocol. `health.csv` reports
+teacher-agreement and output-confidence diagnostics for every included student.
+
 For teacher target q_i and student output p_i, the directed matrix is
 
     C_ij = |CE(q_i, p_j) - CE(q_i, p_i)|.

@@ -139,13 +139,16 @@ def multiscale_distance(feature_stages, query_ids):
 
 
 def neighborhood_mmd_distance(x, edge_index, query_ids, depth=2, width=512,
-                              root_weight=.5, seed=2026, self_loops=False):
+                              root_weight=.5, seed=2026, self_loops=False, aggregation='mean'):
     if width < 2 or width % 2 or depth < 1 or not 0 < root_weight < 1:
         raise ValueError('Require positive depth, even RFF width, and root weight in (0, 1)')
     z = np.asarray(x, dtype=np.float64)
     neighbors = transition_neighbors(edge_index, len(z), self_loops)
     degree = np.array([len(ids) for ids in neighbors])
-    transition = csr_matrix((np.repeat(1. / degree, degree),
+    if aggregation not in ('mean', 'sum'):
+        raise ValueError('Require mean or sum neighborhood aggregation')
+    weights = np.repeat(1. / degree, degree) if aggregation == 'mean' else np.ones(degree.sum())
+    transition = csr_matrix((weights,
                              (np.repeat(np.arange(len(z)), degree), np.concatenate(neighbors))),
                             shape=(len(z), len(z)))
     rng = np.random.default_rng(seed)

@@ -94,7 +94,7 @@ def _save_arrays(path, **arrays):
 
 
 def compare_node_distances(x, edge_index, feature_stages, run_dir, output_dir,
-                           models=('gcn', 'sage'), budgets=(13, 70), depth=2,
+                           models=('gcn', 'sage', 'gin'), budgets=(13, 70), depth=2,
                            root_weight=.5, self_loops=False, rff_width=512,
                            rff_seed=2026, medoid_seeds=range(10), medoid_steps=100,
                            ks=(1, 5, 10, 20), checkpoint_rows=16):

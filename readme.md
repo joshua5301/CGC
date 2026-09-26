@@ -459,3 +459,8 @@ See [the four-distance comparison](docs/node_distance_comparison.md).
 without selecting representatives. It uses disjoint calibration/evaluation nodes,
 distance quantiles and per-node k-NN, reporting CE-change means/tails and separately
 calibrated distance prediction errors. See [the local protocol](docs/local_ce_distance.md).
+
+`src.gnn_distance_candidates.run_candidate_distance_study` adds random GNN
+features, projected finite-width empirical NTKs, sum MMD and a scattering-inspired
+embedding. Original saved GCN/SAGE/GIN outputs are evaluated without retraining;
+distance generation is label-free. See [definitions, caching and limitations](docs/gnn_distance_candidates.md).

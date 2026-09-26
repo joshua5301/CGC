@@ -88,8 +88,37 @@ def matched_mean_distance(x, edge_index, ids, settings):
     return cdist(z[ids], z[ids])
 
 
+def saved_student_fingerprints(source, models=None):
+    original = source['source_protocol']
+    available = original.get('models', source['models'])
+    models = list(available if models is None else models)
+    if not models or len(set(models)) != len(models) or set(models) - set(available):
+        raise ValueError('Requested students must be present in the original probe protocol')
+    known = source['source_logits_sha256']
+    if all(key in original for key in ('train_sizes', 'subset_seeds', 'model_seeds')):
+        filenames = [f'{model}_n{size}_subset{subset}_seed{seed}.npz'
+                     for size in original['train_sizes'] for subset in original['subset_seeds']
+                     for model in models for seed in original['model_seeds']]
+    else:
+        filenames = [name for name in known if name.split('_')[0] in models]
+    fingerprints = {}
+    for filename in filenames:
+        path = Path(source['source_dir']) / filename
+        if not path.exists():
+            raise FileNotFoundError(f'Missing original student cache: {path}; no student is silently skipped or retrained')
+        with np.load(path) as saved:
+            fingerprint = array_digest(saved['trained'], saved['train_ids'])
+        if filename in known and fingerprint != known[filename]:
+            raise ValueError(f'Saved student outputs changed: {filename}')
+        fingerprints[filename] = fingerprint
+    if set(name.split('_')[0] for name in fingerprints) != set(models):
+        raise ValueError('Some requested architectures have no saved outputs')
+    return models, fingerprints
+
+
 def run_local_ce_comparison(result_dir, x, edge_index, fractions=(.01, .02, .05, .1),
-                             ks=(1, 5, 10, 20), calibration_fraction=.25, split_seed=2026):
+                             ks=(1, 5, 10, 20), calibration_fraction=.25, split_seed=2026,
+                             models=None, extra_distances=None, extra_protocol=None):
     result_dir = Path(result_dir)
     source = json.loads((result_dir / 'protocol.json').read_text())
     run = Path(source['source_dir'])
@@ -99,6 +128,7 @@ def run_local_ce_comparison(result_dir, x, edge_index, fractions=(.01, .02, .05,
     digest = hashlib.sha256(np.ascontiguousarray(x, dtype=np.float64).tobytes() + edges.tobytes()).hexdigest()
     if digest != graph['input_sha256']:
         raise ValueError('Graph/features do not match the saved student outputs')
+    models, fingerprints = saved_student_fingerprints(source, models)
     count = int(len(ids) * calibration_fraction)
     if not 2 <= count <= len(ids) - 2:
         raise ValueError('Require at least two calibration and evaluation nodes')
@@ -111,16 +141,22 @@ def run_local_ce_comparison(result_dir, x, edge_index, fractions=(.01, .02, .05,
     with np.load(Path(source['distance_cache']) / 'distances.npz') as saved:
         matrices = {name: saved[name].copy() for name in saved.files}
     matrices['matched_mean'] = matched_mean_distance(x, edge_index, ids, source['distance_settings'])
+    if extra_distances:
+        if set(extra_distances) & set(matrices):
+            raise ValueError('Additional distances cannot replace existing comparators')
+        matrices.update(extra_distances)
     with np.load(run / 'teacher_predictions.npz') as saved:
         targets = saved['probabilities'][ids].astype(np.float64)
     targets /= targets.sum(1, keepdims=True)
     if array_digest(targets) != source['teacher_sha256']:
         raise ValueError('Teacher probabilities changed since the previous comparison')
-    config = dict(version=1, source_result=str(result_dir), source_protocol=source,
+    config = dict(version=2, source_result=str(result_dir), source_protocol=source,
                   fractions=list(fractions), ks=list(ks), calibration_fraction=calibration_fraction,
                   split_seed=split_seed, calibration_nodes=ids[calibration].tolist(),
                   evaluation_nodes=ids[evaluation].tolist(), slope_fit='all_calibration_ordered_pairs_l1',
-                  methods=list(matrices))
+                  methods=list(matrices), models=models, source_logits_sha256=fingerprints,
+                  extra_protocol=extra_protocol,
+                  extra_sha256={name: array_digest(value) for name, value in (extra_distances or {}).items()})
     key = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:12]
     output = result_dir / 'local_ce' / key
     output.mkdir(parents=True, exist_ok=True)
@@ -135,17 +171,26 @@ def run_local_ce_comparison(result_dir, x, edge_index, fractions=(.01, .02, .05,
         cal = matrix[np.ix_(calibration, calibration)]
         scale = pair_scale(cal)
         geometry[method] = (cal / scale, matrix[np.ix_(evaluation, evaluation)] / scale, scale)
-    rows, fits = [], []
-    for filename, fingerprint in tqdm(source['source_logits_sha256'].items(), desc='Local CE preservation'):
+    rows, fits, health = [], [], []
+    for filename, fingerprint in tqdm(fingerprints.items(), desc='Local CE preservation'):
         with np.load(run / filename) as saved:
             logits, train_ids = saved['trained'], saved['train_ids']
             if array_digest(logits, train_ids) != fingerprint:
                 raise ValueError(f'Saved student outputs changed: {filename}')
             change = ce_change_matrix(logits, targets)
+            train_accuracy = float(saved['train_accuracy']) if 'train_accuracy' in saved else np.nan
+            train_ce = float(saved['train_ce']) if 'train_ce' in saved else np.nan
         np.save(output / f'ce_{Path(filename).stem}.npy', change)
         model, size, subset, seed = Path(filename).stem.split('_')
         metadata = dict(model=model, train_size=int(size[1:]), subset_seed=int(subset[6:]),
                         model_seed=int(seed[4:]), evaluation_train_overlap=int(np.isin(ids[evaluation], train_ids).sum()))
+        logp = logits.astype(np.float64) - logsumexp(logits.astype(np.float64), axis=1, keepdims=True)
+        probability = np.exp(logp)
+        health.append(dict(**metadata, train_teacher_agreement=train_accuracy, train_ce=train_ce,
+                           probe_teacher_agreement=float((probability.argmax(1) == targets.argmax(1)).mean()),
+                           probe_teacher_ce=float(-(targets * logp).sum(1).mean()),
+                           confidence=float(probability.max(1).mean()),
+                           entropy=float(-(probability * logp).sum(1).mean())))
         cal_change = change[np.ix_(calibration, calibration)]
         eval_change = change[np.ix_(evaluation, evaluation)]
         for method, (cal_distance, eval_distance, scale) in geometry.items():
@@ -166,10 +211,11 @@ def run_local_ce_comparison(result_dir, x, edge_index, fractions=(.01, .02, .05,
     paired['delta'] = paired.relative_ce_mean - paired.baseline
     paired_summary = paired.groupby(groups, as_index=False).agg(delta_mean=('delta', 'mean'), delta_std=('delta', 'std'))
     summary = summary.merge(paired_summary, on=groups, validate='one_to_one')
-    report = dict(per_run=per_run, summary=summary, fits=pd.DataFrame(fits), paired=paired)
+    report = dict(per_run=per_run, summary=summary, fits=pd.DataFrame(fits), paired=paired,
+                  health=pd.DataFrame(health))
     for name, table in report.items():
         table.to_csv(output / f'{name}.csv', index=False)
-    report.update(folder=str(output), models=source['models'], methods=list(matrices),
+    report.update(folder=str(output), models=models, methods=list(matrices),
                   calibration_nodes=count, evaluation_nodes=len(evaluation))
     return report
 

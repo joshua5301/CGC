@@ -88,15 +88,20 @@ def test_saved_pipeline_uses_disjoint_nodes_and_scale_invariant_scores(tmp_path)
     np.savez(cache / 'distances.npz', grip_S2X=distance, probability_ot=100 * distance)
     config = dict(source_dir=str(run), distance_cache=str(cache), models=['gcn'],
                   distance_settings=dict(root_weight=.5, depth=2, self_loops=False),
-                  source_protocol=dict(distance_protocol=dict(self_loops=False, input_sha256=graph_hash)),
+                  source_protocol=dict(distance_protocol=dict(self_loops=False, input_sha256=graph_hash),
+                                       models=['gcn', 'gin'], train_sizes=[2], subset_seeds=[0], model_seeds=[100]),
                   teacher_sha256=array_digest(targets),
                   source_logits_sha256={filename: array_digest(logits, train_ids)})
     (result / 'protocol.json').write_text(json.dumps(config))
+    np.savez(run / 'gin_n2_subset0_seed100.npz', trained=2 * logits, train_ids=train_ids)
     report = run_local_ce_comparison(result, x, edges, fractions=(.1,), ks=(1,))
     protocol = json.loads((Path(report['folder']) / 'protocol.json').read_text())
     assert not set(protocol['calibration_nodes']) & set(protocol['evaluation_nodes'])
     assert len(protocol['calibration_nodes']) == 2
     assert len(protocol['evaluation_nodes']) == 6
+    assert report['models'] == ['gcn', 'gin']
+    assert 'gin_n2_subset0_seed100.npz' in protocol['source_logits_sha256']
+    assert set(report['health'].model) == {'gcn', 'gin'}
     scores = report['per_run']
     left = scores[scores.method == 'grip_S2X']
     right = scores[scores.method == 'probability_ot']
@@ -106,4 +111,7 @@ def test_saved_pipeline_uses_disjoint_nodes_and_scale_invariant_scores(tmp_path)
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     for figure in plot_local_ce_comparison(report):
+        plt.close(figure)
+    from src.gnn_distance_candidates import plot_candidate_distances
+    for figure in plot_candidate_distances(report):
         plt.close(figure)

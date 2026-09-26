@@ -7,8 +7,8 @@ mixing the earlier accuracy-audit replays with the original model outputs.
 The input graph/features are checked against the original distance fingerprint.
 Predictions and teacher targets are fingerprinted in the new report.
 
-The default evaluates GCN and mean GraphSAGE, with GIN available through
-`models`. All source subset/model seeds are included. No held-out labels are
+The default now evaluates GCN, mean GraphSAGE and GIN through `models`.
+Earlier saved comparisons may list only GCN/SAGE. All source subset/model seeds are included. No held-out labels are
 read here. The source GCN teacher was selected using validation accuracy;
 the entire pipeline therefore is not validation-free.
 
