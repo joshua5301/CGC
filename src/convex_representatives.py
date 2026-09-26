@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 
 from src.dataloader import get_dataset
 from src.node_distances import array_digest
-from src.partition import EPS
+from src.partition import EPS, geometric_medians
 from src.risk_experiment import _fingerprint, _prepare_dataset, _train_student
 from src.trained_teacher_kernel import recover_teacher
 from src.tree_distance import _write_json
@@ -81,7 +81,10 @@ def fit_convex_representatives(model, h, assignment, targets, baseline, steps=10
 
 
 def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1000, lr=.05,
-                                    seeds=tuple(range(100, 110)), data_dir='/content/data/', device='cuda'):
+                                    seeds=tuple(range(100, 110)), data_dir='/content/data/', device='cuda',
+                                    feature_source='s2x'):
+    if feature_source not in ('s2x', 'raw'):
+        raise ValueError('Require s2x or raw mixture features')
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError('Require distinct nonempty student seeds')
     source = Path(source_dir)
@@ -106,13 +109,18 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
                                       graph.val_mask.numpy(), expected, device=device)
     if array_digest(*[p.cpu().numpy() for p in model.state_dict().values()]) != protocol['teacher_state']:
         raise ValueError('Teacher weights differ from the partition teacher')
-    _, _, validation, testing, h = _prepare_dataset(dataset, data_dir, device)
+    train, _, validation, testing, h = _prepare_dataset(dataset, data_dir, device)
     targets, baseline = state['metric_centers'].to(device), state['x'].to(device)
+    if feature_source == 'raw':
+        h = train['x']
+        baseline = geometric_medians(h.double(), state['assignment'].to(device), state['nodes']).float()
     config = dict(version=1, source=str(source), source_protocol=protocol, params=params,
                   partition=array_digest(state['assignment'].numpy(), state['x'].numpy(),
                                          state['y'].numpy(), state['metric_centers'].numpy()),
                   steps=steps, lr=lr, seeds=list(seeds), objective='uniform_hidden_squared_error',
                   initialization='geometric_median_coefficients', torch=str(torch.__version__), device=str(device))
+    if feature_source != 's2x':
+        config['feature_source'] = feature_source
     folder = Path(output_dir) / _fingerprint(config)
     folder.mkdir(parents=True, exist_ok=True)
     _write_json(folder / 'protocol.json', config)
@@ -146,7 +154,7 @@ def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1
             rows.append(record)
         table = pd.DataFrame(rows)
         detail.extend(rows)
-        summaries.append(dict(method=method, dataset=dataset, ratio=protocol['ratio'], nodes=len(cx),
+        summaries.append(dict(method=method, feature_source=feature_source, dataset=dataset, ratio=protocol['ratio'], nodes=len(cx),
                               reconstruction_mse=float(per_cluster.mean()), final_val=table.validation.mean(),
                               final_val_std=table.validation.std(ddof=0), test_mean=table.test.mean(),
                               test_std=table.test.std(ddof=0)))

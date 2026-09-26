@@ -34,3 +34,20 @@ partition and teacher hashes are checked; cached original artifacts are read-onl
 Run tests/test_convex_representatives.py in Colab. Tests cover original adjacency
 cache isolation, equivalence of the convex initialization to GRIP medians,
 within-cluster support, teacher freezing, and reconstruction optimization.
+
+## Raw-input mixtures
+
+Set feature_source='raw' to use the dataset loader's original input X instead
+of S²X. Arxiv X retains the existing training-set-fitted standardization; raw
+here means before graph propagation, not before dataset preprocessing. The
+partition, hidden targets, mean teacher labels, and student settings remain
+the same saved hidden-distance experiment. Raw mixtures initialize from the
+geometric median computed in X for each of those fixed clusters. Thus both
+feature spaces use their own median initialization rule, not identical mixture
+coefficients. Each includes its corresponding median control.
+
+Both modes use the existing Adam solver for 1000 steps and select the lowest
+reconstruction-error iterate, without accuracy feedback. Raw and S²X runs have
+separate cache identities; existing S²X caches remain usable. Run each mode
+with the same student seeds and compare both raw-minus-S²X paired accuracies
+and the per-space convex-minus-median differences.
