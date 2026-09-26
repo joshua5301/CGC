@@ -115,3 +115,10 @@ def test_saved_pipeline_uses_disjoint_nodes_and_scale_invariant_scores(tmp_path)
     from src.gnn_distance_candidates import plot_candidate_distances
     for figure in plot_candidate_distances(report):
         plt.close(figure)
+    from src.gcn_kernel_features import run_gcn_kernel_study
+    analytic = run_gcn_kernel_study(result, x, edges, report['folder'], models=['gcn', 'gin'], device='cpu')
+    assert {'gcn2_ntk', 'gcn2_nngp'} <= set(analytic['methods'])
+    old = report['summary'].sort_values(['model', 'method', 'selection', 'cutoff'])
+    same = analytic['summary'][analytic['summary'].method.isin(report['methods'])].sort_values(
+        ['model', 'method', 'selection', 'cutoff'])
+    np.testing.assert_allclose(old.ce_mean_mean, same.ce_mean_mean, atol=1e-12)

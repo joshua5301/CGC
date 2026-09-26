@@ -464,3 +464,11 @@ calibrated distance prediction errors. See [the local protocol](docs/local_ce_di
 features, projected finite-width empirical NTKs, sum MMD and a scattering-inspired
 embedding. Original saved GCN/SAGE/GIN outputs are evaluated without retraining;
 distance generation is label-free. See [definitions, caching and limitations](docs/gnn_distance_candidates.md).
+
+## Analytic two-layer GCN kernel features
+
+`src.gcn_kernel_features.run_gcn_kernel_study` compares exact infinite-width
+two-layer ReLU GCN NTK and NNGP feature distances with the frozen GCN/SAGE/GIN
+student baselines. It can reuse all eight candidates from the preceding local
+CE experiment. Explicit kernel features and reconstruction diagnostics are saved.
+See [architecture, derivation and Colab verification](docs/gcn_kernel_features.md).

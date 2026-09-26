@@ -193,7 +193,8 @@ def plot_candidate_distances(report):
     import matplotlib.pyplot as plt
     labels = dict(grip_S2X='S²X', probability_ot='Probability OT', matched_mean='B²X',
                   multiscale='Multiscale', neighborhood_mmd='Mean MMD', sum_mmd='Sum MMD',
-                  scattering='Scattering', **{f'{family}_{model}': f'{family.upper()} {model.upper()}'
+                  scattering='Scattering', gcn2_ntk='GCN2 analytic NTK', gcn2_nngp='GCN2 analytic NNGP',
+                  **{f'{family}_{model}': f'{family.upper()} {model.upper()}'
                                               for family in ('rf', 'entk') for model in ('gcn', 'sage', 'gin')})
     methods, models = report['methods'], report['models']
     metrics = [('relative_ce_mean_mean', 'Mean CE change / all-pair mean'),
