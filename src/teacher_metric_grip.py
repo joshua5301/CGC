@@ -30,11 +30,12 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                             modes=('s2x', 'hidden', 'logits'), data_dir='/content/data/',
                             search_seeds=(0, 1, 2), final_seeds=tuple(range(100, 110)),
                             grip_seed=1234, grip_steps=300, grip_init='kmeans',
-                            epochs=1000, eval_every=10, hidden=256, device='cuda'):
+                            epochs=1000, eval_every=10, hidden=256, device='cuda',
+                            gradient_projections=512, gradient_seeds=(6000, 7000)):
     if set(space) != {'T', 'kl_weight', 'dropout', 'lr', 'weight_decay'} or any(not v for v in space.values()):
         raise ValueError('Provide nonempty grids for T, kl_weight, dropout, lr, weight_decay')
-    if not modes or not set(modes) <= {'s2x', 'hidden', 'logits'} or len(set(modes)) != len(modes):
-        raise ValueError('Require distinct s2x/hidden/logits modes')
+    if not modes or not set(modes) <= {'s2x', 'hidden', 'logits', 'full_gradient'} or len(set(modes)) != len(modes):
+        raise ValueError('Require distinct s2x/hidden/logits/full_gradient modes')
     if not search_seeds or not final_seeds or set(search_seeds) & set(final_seeds):
         raise ValueError('Require disjoint nonempty search and final student seeds')
     if min(space['T']) <= 0 or min(space['kl_weight']) < 0 or grip_steps < 1:
@@ -71,6 +72,13 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                   grip_seed=grip_seed, grip_steps=grip_steps, grip_init=grip_init,
                   realization='geometric_median_in_original_S2X', teacher_label_override=False,
                   torch=str(torch.__version__), pyg=str(torch_geometric.__version__), device=str(device))
+    if 'full_gradient' in modes:
+        from src.teacher_gradient_features import full_gradient_features
+
+        identity = {key: config[key] for key in ('teacher_state', 'graph', 'torch', 'pyg', 'device')}
+        embeddings['full_gradient'], config['gradient'] = full_gradient_features(
+            model, tx, te, Path(output_dir) / 'gradient_features', identity,
+            projections=gradient_projections, seeds=gradient_seeds)
     folder = Path(output_dir) / _fingerprint(config)
     folder.mkdir(parents=True, exist_ok=True)
     _write_json(folder / 'protocol.json', config)

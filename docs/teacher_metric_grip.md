@@ -38,3 +38,28 @@ summary.csv, final_seeds.csv, per-mode trials.csv/best.json, partition tensors
 
 Run tests/test_teacher_metric_grip.py on Colab before the sweep. No local
 numerical experiment or smoke test is required.
+
+## Full parameter gradient distance
+
+Set modes=('full_gradient',) to sweep the trained teacher's output-Jacobian
+distance under the same condensation/evaluation protocol. This is a logit
+Jacobian, not a CE-loss gradient. All parameter groups contribute, with native
+Euclidean parameter weighting and output-channel averaging.
+
+The readout contribution is computed exactly as the hidden-feature Gram plus
+the constant bias Gram. Internal parameters use Rademacher parameter-direction
+JVPs, matching the prior teacher-kernel comparison. With C output channels,
+R projections per seed and L seeds, concatenate hidden features, the constant
+bias feature, and each seed's JVP block divided by sqrt(R*C*L). Its inner
+products equal the earlier exact-readout-plus-sketched-internal kernel up to
+floating-point error. Default R=512 and L=2 give 7425 features for Cora's
+256-wide, seven-output teacher. No explicit all-node/full-parameter Jacobian
+or N-by-N distance matrix is required. This is a sketch approximation of the
+full gradient distance, not an exact Jacobian calculation.
+
+Sketch seeds and dimension are fixed across hyperparameters. Features are
+cached per teacher/data/library configuration independently of the grid and
+density, with one atomic file per sketch seed. Existing s2x/hidden/logits runs
+retain their protocol hashes and resume behavior. Use a separate output root
+for concurrent gradient and earlier sweeps. Run tests/test_teacher_gradient_features.py
+in Colab to verify equivalence with the previous kernel and cache reuse.
