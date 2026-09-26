@@ -26,12 +26,46 @@ def realize_partition(h, state):
     return geometric_medians(h.double(), assignment, state['nodes']).float()
 
 
+def prepare_metric_teacher(dataset, output_dir, data_dir='/content/data/', device='cuda', **settings):
+    from src.empirical_ntk_study import _save
+    from src.probe_teacher import fit_gcn_probe_teacher
+
+    if dataset not in ('cora', 'citeseer', 'arxiv'):
+        raise ValueError('Require a supported transductive dataset')
+    graph = get_dataset(SimpleNamespace(dataset_name=dataset, raw_data_dir=str(data_dir).rstrip('/') + '/'))
+    x, edges, y = graph.x.numpy(), graph.edge_index.numpy(), graph.y.numpy()
+    train, val = graph.train_mask.numpy(), graph.val_mask.numpy()
+    graph_hash = array_digest(x, edges)
+    options = dict(hidden=256, dropout=.5, lr=.01, weight_decay=5e-4,
+                   epochs=1000, eval_every=10, seed=0)
+    options.update(settings)
+    config = dict(version=1, dataset=dataset, graph_sha256=graph_hash,
+                  supervision_sha256=array_digest(train, val, y[train], y[val]), settings=options,
+                  torch=str(torch.__version__), pyg=str(torch_geometric.__version__), device=str(device))
+    folder = Path(output_dir) / _fingerprint(config)
+    folder.mkdir(parents=True, exist_ok=True)
+    protocol = folder / 'protocol.json'
+    if protocol.exists() and all((folder / name).exists() for name in ('teacher_state.pt', 'teacher_predictions.npz')):
+        return dict(folder=str(folder), teacher=json.loads(protocol.read_text())['teacher'])
+    teacher = fit_gcn_probe_teacher(x, edges, np.flatnonzero(train), y[train],
+                                    np.flatnonzero(val), y[val], device=device, **options)
+    temporary = folder / 'teacher_state.tmp'
+    torch.save(teacher['state_dict'], temporary)
+    temporary.replace(folder / 'teacher_state.pt')
+    _save(folder / 'teacher_predictions.npz', probabilities=teacher['probabilities'], logits=teacher['logits'])
+    teacher['sweep'].to_csv(folder / 'teacher_validation.csv', index=False)
+    _write_json(protocol, dict(**config, teacher=teacher['config']))
+    return dict(folder=str(folder), teacher=teacher['config'])
+
+
 def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                             modes=('s2x', 'hidden', 'logits'), data_dir='/content/data/',
                             search_seeds=(0, 1, 2), final_seeds=tuple(range(100, 110)),
                             grip_seed=1234, grip_steps=300, grip_init='kmeans',
                             epochs=1000, eval_every=10, hidden=256, device='cuda',
-                            gradient_projections=512, gradient_seeds=(6000, 7000)):
+                            gradient_projections=512, gradient_seeds=(6000, 7000), dataset='cora'):
+    if dataset not in ('cora', 'citeseer', 'arxiv') or (dataset, ratio) not in BUDGET:
+        raise ValueError('Require a supported transductive dataset and condensation ratio')
     if set(space) != {'T', 'kl_weight', 'dropout', 'lr', 'weight_decay'} or any(not v for v in space.values()):
         raise ValueError('Provide nonempty grids for T, kl_weight, dropout, lr, weight_decay')
     if not modes or not set(modes) <= {'s2x', 'hidden', 'logits', 'full_gradient'} or len(set(modes)) != len(modes):
@@ -45,12 +79,22 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
     teacher = original['teacher']
     if teacher.get('model') != 'gcn' or teacher.get('layers') != 2 or teacher.get('T') != 1.:
         raise ValueError('Require the saved two-layer GCN teacher with T=1')
-    graph = get_dataset(SimpleNamespace(dataset_name='cora', raw_data_dir=str(data_dir).rstrip('/') + '/'))
+    if original.get('dataset', dataset) != dataset:
+        raise ValueError('Saved teacher dataset differs from requested dataset')
+    graph = get_dataset(SimpleNamespace(dataset_name=dataset, raw_data_dir=str(data_dir).rstrip('/') + '/'))
     x, edges = graph.x.numpy(), graph.edge_index.numpy()
-    _, canonical = _neighbors(edges, len(x), original['distance_protocol']['self_loops'])
-    digest = hashlib.sha256(np.ascontiguousarray(x, dtype=np.float64).tobytes() + canonical.tobytes()).hexdigest()
-    if digest != original['distance_protocol']['input_sha256']:
-        raise ValueError('Cora features/graph differ from the saved teacher experiment')
+    if 'graph_sha256' in original:
+        digest, expected = array_digest(x, edges), original['graph_sha256']
+        supervision = array_digest(graph.train_mask.numpy(), graph.val_mask.numpy(),
+                                   graph.y[graph.train_mask].numpy(), graph.y[graph.val_mask].numpy())
+        if supervision != original['supervision_sha256']:
+            raise ValueError('Teacher training/validation supervision changed')
+    else:
+        _, canonical = _neighbors(edges, len(x), original['distance_protocol']['self_loops'])
+        digest = hashlib.sha256(np.ascontiguousarray(x, dtype=np.float64).tobytes() + canonical.tobytes()).hexdigest()
+        expected = original['distance_protocol']['input_sha256']
+    if digest != expected:
+        raise ValueError('Features/graph differ from the saved teacher experiment')
     with np.load(run / 'teacher_predictions.npz') as saved:
         targets = saved['probabilities'].copy()
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -60,10 +104,10 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                                       graph.train_mask.numpy(), graph.val_mask.numpy(), targets, device=device)
     model.eval()
     features, logits, _, _ = readout_features(model, tx, te, 'gcn')
-    _, _, validation, testing, h = _prepare_dataset('cora', data_dir, device)
+    _, _, validation, testing, h = _prepare_dataset(dataset, data_dir, device)
     embeddings = dict(s2x=h, hidden=features.detach(), logits=logits.detach())
     settings = dict(epochs=epochs, eval_every=eval_every, hidden=hidden, loss_weighting='uniform')
-    config = dict(version=1, dataset='cora', ratio=ratio, requested_nodes=BUDGET['cora', ratio],
+    config = dict(version=1, dataset=dataset, ratio=ratio, requested_nodes=BUDGET[dataset, ratio],
                   teacher=teacher, teacher_state=array_digest(*[p.cpu().numpy() for p in model.state_dict().values()]),
                   graph=array_digest(x, edges, graph.y.numpy(), graph.train_mask.numpy(),
                                      graph.val_mask.numpy(), graph.test_mask.numpy()),
@@ -141,7 +185,7 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
             mode_rows.append(record)
         frame = pd.DataFrame(mode_rows)
         repeats.extend(mode_rows)
-        rows.append(dict(dataset='cora', ratio=ratio, mode=mode, nodes=state['nodes'],
+        rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, nodes=state['nodes'],
                          requested_nodes=config['requested_nodes'], **best.params,
                          search_val=100 * best.value, final_val=frame.validation.mean(),
                          final_val_std=frame.validation.std(ddof=0), test_mean=frame.test.mean(),

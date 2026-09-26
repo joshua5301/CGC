@@ -63,3 +63,21 @@ density, with one atomic file per sketch seed. Existing s2x/hidden/logits runs
 retain their protocol hashes and resume behavior. Use a separate output root
 for concurrent gradient and earlier sweeps. Run tests/test_teacher_gradient_features.py
 in Colab to verify equivalence with the previous kernel and cache reuse.
+
+## Arxiv and reusable teachers
+
+`prepare_metric_teacher(dataset, output_dir, **settings)` trains and caches a
+two-layer GCN on original training labels, selecting its checkpoint by validation
+accuracy then CE. It supports cora, citeseer, and arxiv. Teacher artifacts include
+all-node probabilities/logits, checkpoint, and validation history. Training and
+checkpoint selection never receive test labels. Changing teacher settings or
+training/validation supervision creates a new cache directory.
+
+Pass the returned folder as teacher_run and dataset='arxiv', ratio=0.0025 to
+run_teacher_metric_grip for the repository's 454-node budget. The Arxiv loader
+retains existing preprocessing (undirected edges and feature standardization
+fit on training nodes). Each distance uses the same fixed teacher. Existing
+Cora teacher folders and sweep hashes remain compatible. Partitions use all
+nodes and teacher probabilities; student supervision remains uniform CE on
+the representatives, with original-graph validation/test evaluation. No dense
+all-pairs distance matrix is formed.

@@ -1,7 +1,10 @@
 import torch
+import numpy as np
+import pandas as pd
+from types import SimpleNamespace
 
 from src.partition import partition
-from src.teacher_metric_grip import realize_partition
+from src.teacher_metric_grip import prepare_metric_teacher, realize_partition
 
 
 def test_metric_partition_realizes_original_input_dimension():
@@ -27,3 +30,31 @@ def test_baseline_realization_matches_grip_centers():
     state = partition(h, q, 2, initial_assignment=torch.tensor([0, 0, 0, 1, 1, 1]),
                       return_diagnostics=True)
     torch.testing.assert_close(realize_partition(h, state), state['x'])
+
+
+def test_teacher_uses_train_and_validation_and_resumes(tmp_path, monkeypatch):
+    graph = SimpleNamespace(x=torch.ones(4, 2), edge_index=torch.tensor([[0, 1], [1, 0]]),
+                            y=torch.tensor([0, 1, 0, 99]),
+                            train_mask=torch.tensor([True, True, False, False]),
+                            val_mask=torch.tensor([False, False, True, False]))
+    calls = []
+
+    def fit(x, edges, train_ids, train_labels, val_ids, val_labels, **kwargs):
+        np.testing.assert_array_equal(train_ids, [0, 1])
+        np.testing.assert_array_equal(train_labels, [0, 1])
+        np.testing.assert_array_equal(val_ids, [2])
+        np.testing.assert_array_equal(val_labels, [0])
+        calls.append(1)
+        return dict(state_dict={'weight': torch.ones(2)}, probabilities=np.full((4, 2), .5),
+                    logits=np.zeros((4, 2)), sweep=pd.DataFrame([{'val_accuracy': 50.}]),
+                    config={'model': 'gcn'})
+
+    monkeypatch.setattr('src.teacher_metric_grip.get_dataset', lambda args: graph)
+    monkeypatch.setattr('src.probe_teacher.fit_gcn_probe_teacher', fit)
+    first = prepare_metric_teacher('arxiv', tmp_path, device='cpu', epochs=2)
+    second = prepare_metric_teacher('arxiv', tmp_path, device='cpu', epochs=2)
+    assert first == second
+    assert len(calls) == 1
+    third = prepare_metric_teacher('arxiv', tmp_path, device='cpu', epochs=3)
+    assert third['folder'] != first['folder']
+    assert len(calls) == 2
