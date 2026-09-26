@@ -27,6 +27,7 @@ from src.utils import BUDGET, normalize_adj_sparse
 from src.grid_search import GridStudy
 from src.grip_distance import distance_weights, training_support_distance
 from src.grip_candidates import candidate_initialization
+from src.fsw import FSWEncoder, neighborhoods, realize_graph
 
 
 def _fingerprint(value):
@@ -65,7 +66,7 @@ def _forward(model, x, adjacency=None):
     for i, layer in enumerate(model.layers):
         x = layer.lin(x)
         if adjacency is not None:
-            x = torch.sparse.mm(adjacency, x)
+            x = adjacency @ x if adjacency.layout == torch.strided else torch.sparse.mm(adjacency, x)
         if layer.bias is not None:
             x = x + layer.bias
         if i + 1 < len(model.layers):
@@ -82,7 +83,8 @@ def _accuracy(model, evaluation):
     return float(correct.float().mean() if mask is None else correct[mask].float().mean())
 
 
-def _train_student(cx, cy, validation, params, seed, settings, testing=None, counts=None, return_model=False):
+def _train_student(cx, cy, validation, params, seed, settings, testing=None, counts=None, return_model=False,
+                   adjacency=None):
     weighting = settings.get('loss_weighting', 'uniform')
     if weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
@@ -105,7 +107,7 @@ def _train_student(cx, cy, validation, params, seed, settings, testing=None, cou
                                          weight_decay=params['weight_decay'])
         model.train()
         optimizer.zero_grad(set_to_none=True)
-        losses = -(cy * _forward(model, cx)).sum(1)
+        losses = -(cy * _forward(model, cx, adjacency)).sum(1)
         loss = losses.mean() if weights is None else (weights * losses).sum()
         loss.backward()
         optimizer.step()
@@ -135,7 +137,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                     grip_steps=300, evaluate_test=True, initial_configs=(), loss_weighting='uniform',
                     aware=None, grip_init='kmeans', grip_init_block_size=256, search='optuna',
                     grip_seed=1234, grip_candidates=None, grip_candidate_seed=0,
-                    grip_candidate_refinement='kmeans'):
+                    grip_candidate_refinement='kmeans', fsw=None):
     if grip_candidate_refinement not in ('kmeans', 'grip') or (grip_candidate_refinement == 'grip' and grip_candidates is None):
         raise ValueError('Direct GRIP initialization requires a candidate pool')
     if grip_candidates is not None and (grip_candidates not in ('train', 'random') or method != 'grip' or grip_init != 'kmeans'):
@@ -150,8 +152,14 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         raise ValueError('Invalid GRIP initialization settings')
     if loss_weighting not in ('uniform', 'mass'):
         raise ValueError('Require uniform or mass loss weighting')
-    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware', 'risk_fro', 'grip_distance') or grip_steps < 1:
+    if method not in ('risk', 'grip', 'transport', 'corrected', 'gcn_aware', 'risk_fro', 'grip_distance', 'fsw_grip') or grip_steps < 1:
         raise ValueError('Unknown method or invalid grip_steps')
+    if method == 'fsw_grip' and loss_weighting != 'mass':
+        raise ValueError('FSW-GRIP requires mass-weighted CE')
+    fsw_settings = dict(seed=0, neighbors=8, steps=200, lr=.01)
+    fsw_settings.update(fsw or {})
+    if set(fsw_settings) - {'seed', 'neighbors', 'steps', 'lr'}:
+        raise ValueError('Unknown FSW graph realization setting')
     if method == 'grip_distance' and (grip_init == 'greedy' or loss_weighting != 'uniform'):
         raise ValueError('Distance GRIP requires feature-only initialization and uniform CE')
     aware = dict(aware or {})
@@ -166,13 +174,14 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         space = dict(B=dict(low=0.01, high=100.0, log=True),
                      teacher_kernel=['erf', 'relu'], gamma=[0.01, 0.1, 1.0],
                      T=[0.2, 0.5, 1.0, 2.0], basis=[3000], dropout=[0.1, 0.5, 0.9])
-        if method in ('grip', 'grip_distance'):
+        if method in ('grip', 'grip_distance', 'fsw_grip'):
             space.pop('B')
             space['kl_weight'] = dict(low=0.01, high=10.0, log=True)
     teacher_keys = {'teacher_kernel', 'gamma', 'T', 'basis'}
-    coefficient = 'kl_weight' if method in ('grip', 'grip_distance') else 'B'
+    coefficient = 'kl_weight' if method in ('grip', 'grip_distance', 'fsw_grip') else 'B'
     distance_keys = {'distance_k', 'distance_power'} if method == 'grip_distance' else set()
-    if set(space) - teacher_keys - distance_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
+    fsw_keys = {'fsw_depth', 'fsw_width', 'fsw_frequency'} if method == 'fsw_grip' else set()
+    if set(space) - teacher_keys - distance_keys - fsw_keys - {coefficient, 'dropout', 'lr', 'weight_decay'}:
         raise ValueError(f'Unsupported search parameter for {method}')
     aliases = {'kernel': 'teacher_kernel', 'temperature': 'T'}
     teacher = {aliases.get(k, k): v for k, v in (teacher or {}).items()}
@@ -201,6 +210,19 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         teacher_cache = OrderedDict()
         feature_cache = {}
         distance_cache = {}
+        fsw_cache = {}
+        if method == 'fsw_grip':
+            original_edges = train['adj'].to_sparse_coo().coalesce().indices()
+            original_layout = neighborhoods(original_edges, len(H))
+
+        def get_fsw(params):
+            key = tuple(params[k] for k in ('fsw_depth', 'fsw_width', 'fsw_frequency'))
+            if fsw_cache.get('key') != key:
+                fsw_cache.clear()
+                encoder = FSWEncoder(train['x'].shape[1], *key, seed=fsw_settings['seed']).to(device)
+                embedding = encoder.fit_transform(train['x'], original_layout)
+                fsw_cache.update(key=key, encoder=encoder, embedding=embedding)
+            return fsw_cache['encoder'], fsw_cache['embedding']
 
         def get_labels(params):
             kernel, gamma, temperature, basis = (params[k] for k in
@@ -246,6 +268,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                             search_seeds=list(search_seeds),
                             final_seeds=list(final_seeds), student=settings,
                             lr=lr, weight_decay=weight_decay, layers=2, loss=f'{loss_weighting}_soft_ce')
+            if method == 'fsw_grip':
+                protocol['fsw'] = fsw_settings
             case = output_dir / f'{name}_{ratio:g}_{_fingerprint(protocol)}'
             case.mkdir(parents=True, exist_ok=True)
             (case / 'protocol.json').write_text(json.dumps(protocol, indent=2), encoding='utf-8')
@@ -277,12 +301,39 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                                 raise ValueError(f'Initial {key}={value} is outside the search space')
                         study.enqueue_trial(candidate['params'])
             def get_condensed(params):
-                condensation_config = {k: params[k] for k in sorted(teacher_keys | {coefficient} | distance_keys)}
+                condensation_config = {k: params[k] for k in sorted(teacher_keys | {coefficient} | distance_keys | fsw_keys)}
                 path = case / f'condensed_{_fingerprint(condensation_config)}.pt'
                 if path.exists():
                     return torch.load(path, map_location='cpu', weights_only=True), path.name
                 Q = get_labels(params)
-                if method == 'gcn_aware':
+                if method == 'fsw_grip':
+                    if device.type == 'cuda':
+                        torch.cuda.synchronize(device)
+                    started = time.perf_counter()
+                    encoder, embedding = get_fsw(params)
+                    state = grip_partition(embedding, Q, m, kl_weight=params['kl_weight'],
+                                           iters=grip_steps, seed=grip_seed, init=grip_init,
+                                           init_block_size=grip_init_block_size, return_diagnostics=True)
+                    assignment, centers = state['assignment'].to(device), state['x'].to(device)
+                    graph = realize_graph(train['x'], original_edges, assignment, centers, encoder,
+                                          **{k: v for k, v in fsw_settings.items() if k != 'seed'})
+                    with torch.no_grad():
+                        weights = state['counts'].to(device) / len(embedding)
+                        fit = (embedding - centers[assignment]).norm(dim=1).mean()
+                        actual = graph['realized_embedding'].to(device)
+                        direct = (embedding - actual[assignment]).norm(dim=1).mean()
+                        reconstruction = ((centers - actual).norm(dim=1) * weights).sum()
+                    if device.type == 'cuda':
+                        torch.cuda.synchronize(device)
+                    condensed = dict(**graph, y=state['y'], counts=state['counts'],
+                                     assignment=state['assignment'], embedding_centers=state['x'],
+                                     encoder_state={k: v.cpu() for k, v in encoder.state_dict().items()},
+                                     converged=state['converged'], J=state['final_J'],
+                                     history=[state['initial_J']], sweeps=None,
+                                     embedding_fit=float(fit), embedding_direct=float(direct),
+                                     embedding_upper=float(fit + reconstruction),
+                                     seconds=time.perf_counter() - started)
+                elif method == 'gcn_aware':
                     feature_cache.clear()
                     gc.collect()
                     condensed = gcn_aware_partition(H, Q, m, params['B'], train, train_mask,
@@ -322,7 +373,9 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
             def objective(trial):
                 params = dict(dropout=float(defaults[4].split(',')[0]),
                               lr=lr, weight_decay=weight_decay, **teacher_config)
-                params[coefficient] = 0.5 if method in ('grip', 'grip_distance') else 1.0
+                params[coefficient] = 0.5 if method in ('grip', 'grip_distance', 'fsw_grip') else 1.0
+                if method == 'fsw_grip':
+                    params.update(fsw_depth=2, fsw_width=128, fsw_frequency=2.)
                 if method == 'grip_distance':
                     params.update(distance_k=10, distance_power=1.)
                 for key, specification in space.items():
@@ -334,8 +387,10 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                         params[key] = trial.suggest_float(key, **specification)
                 condensed, artifact = get_condensed(params)
                 cx, cy = condensed['x'].to(device), condensed['y'].to(device)
+                adjacency = condensed.get('adjacency')
+                adjacency = None if adjacency is None else adjacency.to(device)
                 values = [_train_student(cx, cy, validation, params, s, settings,
-                                         counts=condensed['counts'])[0]
+                                         counts=condensed['counts'], adjacency=adjacency)[0]
                           for s in search_seeds]
                 for key, value in dict(config=params, artifact=artifact, validation_runs=values,
                                        nodes=len(condensed['x']),
@@ -346,7 +401,8 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 for key in ('status', 'mass_tv', 'row_residual', 'column_residual',
                             'mass_correction', 'variance_term', 'correction_term', 'moment_term',
                             'objective_name', 'label_gap', 'label_converged', 'head_stationarity_max',
-                            'covariance_fro', 'covariance_trace', 'trace_bound', 'feature_term', 'trace_to_fro'):
+                            'covariance_fro', 'covariance_trace', 'trace_bound', 'feature_term', 'trace_to_fro',
+                            'realization_initial', 'realization_final', 'embedding_fit', 'embedding_direct', 'embedding_upper'):
                     if key in condensed:
                         trial.set_user_attr(key, condensed[key])
                 return float(np.mean(values))
@@ -372,11 +428,13 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 condensed = torch.load(case / best.user_attrs['artifact'],
                                        map_location='cpu', weights_only=True)
                 cx, cy = condensed['x'].to(device), condensed['y'].to(device)
+                adjacency = condensed.get('adjacency')
+                adjacency = None if adjacency is None else adjacency.to(device)
                 records = []
                 for s in final_seeds:
                     val, test, epoch = _train_student(cx, cy, validation, params, s,
                                                      settings, testing if evaluate_test else None,
-                                                     counts=condensed['counts'])
+                                                     counts=condensed['counts'], adjacency=adjacency)
                     records.append(dict(seed=s, validation=val,
                                         test=test if test is not None else np.nan, best_epoch=epoch))
                 final = pd.DataFrame(records)
@@ -394,12 +452,15 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
                 J_initial=best.user_attrs['J_initial'], J_final=best.user_attrs['J_final'],
                 converged=best.user_attrs['converged'], sweeps=best.user_attrs['sweeps'],
                 partition_seconds=best.user_attrs['partition_seconds'], folder=str(case)))
-            if method in ('grip', 'grip_distance'):
+            if method in ('grip', 'grip_distance', 'fsw_grip'):
                 summaries[-1]['grip_init'] = grip_init
                 summaries[-1]['grip_seed'] = grip_seed
                 summaries[-1]['grip_candidates'] = grip_candidates
                 summaries[-1]['grip_candidate_seed'] = grip_candidate_seed
                 summaries[-1]['grip_candidate_refinement'] = grip_candidate_refinement
+            if method == 'fsw_grip':
+                summaries[-1].update({k: best.user_attrs[k] for k in
+                    ('realization_initial', 'realization_final', 'embedding_fit', 'embedding_direct', 'embedding_upper')})
             if method == 'transport':
                 summaries[-1].update({k: best.user_attrs[k] for k in
                                       ('status', 'mass_tv', 'row_residual', 'column_residual')})
@@ -417,6 +478,7 @@ def run_experiments(datasets, output_dir, n_trials=20, space=None,
         teacher_cache.clear()
         feature_cache.clear()
         distance_cache.clear()
+        fsw_cache.clear()
         del train, train_mask, validation, testing, H
         gc.collect()
         torch.cuda.empty_cache()

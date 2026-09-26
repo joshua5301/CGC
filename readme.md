@@ -419,3 +419,11 @@ are used to estimate weights. See [protocol](docs/grip_distance.md).
 t-SNE projection, saves aligned cluster plots and teacher-class allocation plots,
 and reports ARI/NMI and matched reassignment rates. No student training is run.
 See [interpretation notes](docs/grip_visualization.md).
+# FSW-GRIP
+
+`src.risk_experiment.run_experiments` now supports `method="fsw_grip"` with
+`loss_weighting="mass"`. A frozen FSW neighborhood encoder supplies clustering
+features, then a small graph with raw-dimensional features is reconstructed for
+the existing two-layer GCN. Grid keys include `fsw_depth`, `fsw_width`, and
+`fsw_frequency`; fixed reconstruction options go in `fsw`.
+See [the method and theoretical limitations](docs/fsw_grip.md).
