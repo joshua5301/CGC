@@ -101,17 +101,8 @@ def evaluate_distance_blocks(blocks, train_labels, val_labels, train_degree, val
     return dict(sweep=sweep, best=best, per_class=per_class, best_class=best_class, diagnostics=diagnostic)
 
 
-def analyze_tree_distances(x, edge_index, y, train_mask, val_mask, propagated_features,
-                           distance_dir, output_dir, depths=(1, 2, 3),
-                           ks=(1, 3, 5, 7, 11, 15, 21, 31), voting=('uniform', 'distance')):
+def load_distance_blocks(x, edge_index, distance_dir, train_ids, val_ids, depths):
     x = np.ascontiguousarray(x, dtype=np.float64)
-    y = np.asarray(y)
-    train_mask, val_mask = np.asarray(train_mask, dtype=bool), np.asarray(val_mask, dtype=bool)
-    if train_mask.shape != (len(x),) or val_mask.shape != train_mask.shape or (train_mask & val_mask).any():
-        raise ValueError('Require disjoint train/validation masks matching the graph')
-    train_ids, val_ids = np.flatnonzero(train_mask), np.flatnonzero(val_mask)
-    if not len(train_ids) or not len(val_ids):
-        raise ValueError('Require nonempty train and validation splits')
     directory = Path(distance_dir)
     protocol = json.loads((directory / 'protocol.json').read_text(encoding='utf-8'))
     _, edges = _neighbors(edge_index, len(x), protocol['self_loops'])
@@ -120,8 +111,6 @@ def analyze_tree_distances(x, edge_index, y, train_mask, val_mask, propagated_fe
     digest.update(edges.tobytes())
     if protocol['version'] != 1 or protocol['input_sha256'] != digest.hexdigest() or protocol['shape'] != list(x.shape):
         raise ValueError('Distance cache does not match the input graph and features')
-    neighbors, _ = _neighbors(edge_index, len(x), False)
-    degree = np.array([len(v) for v in neighbors])
     blocks = {}
     for depth in sorted(set((0, *depths))):
         state = json.loads((directory / f'depth_{depth}.json').read_text(encoding='utf-8'))
@@ -134,6 +123,23 @@ def analyze_tree_distances(x, edge_index, y, train_mask, val_mask, propagated_fe
         if not np.allclose(block, matrix[np.ix_(train_ids, val_ids)].T) or not np.allclose(matrix.diagonal(), 0):
             raise ValueError('Distance cache is not symmetric with a zero diagonal')
         blocks['raw' if depth == 0 else f'tree_{depth}'] = block
+    return protocol, blocks
+
+
+def analyze_tree_distances(x, edge_index, y, train_mask, val_mask, propagated_features,
+                           distance_dir, output_dir, depths=(1, 2, 3),
+                           ks=(1, 3, 5, 7, 11, 15, 21, 31), voting=('uniform', 'distance')):
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    y = np.asarray(y)
+    train_mask, val_mask = np.asarray(train_mask, dtype=bool), np.asarray(val_mask, dtype=bool)
+    if train_mask.shape != (len(x),) or val_mask.shape != train_mask.shape or (train_mask & val_mask).any():
+        raise ValueError('Require disjoint train/validation masks matching the graph')
+    train_ids, val_ids = np.flatnonzero(train_mask), np.flatnonzero(val_mask)
+    if not len(train_ids) or not len(val_ids):
+        raise ValueError('Require nonempty train and validation splits')
+    protocol, blocks = load_distance_blocks(x, edge_index, distance_dir, train_ids, val_ids, depths)
+    neighbors, _ = _neighbors(edge_index, len(x), False)
+    degree = np.array([len(v) for v in neighbors])
     h = np.asarray(propagated_features)
     if h.ndim != 2 or len(h) != len(x) or not np.isfinite(h).all():
         raise ValueError('Invalid propagated feature matrix')

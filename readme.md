@@ -439,3 +439,7 @@ See [the distance definition and restart protocol](docs/exact_tree_distance.md).
 validation k-NN, class recalls, and exact-degree-matched ranking diagnostics.
 It compares raw features, GRIP's propagated features, and a degree-only control
 without test-label access. See [the experiment protocol](docs/tree_distance_analysis.md).
+
+`src.tree_distance_factorial.run_tree_distance_factorial` compares original/L2
+features crossed with sum/mean exact OT at depth one, including normalized raw
+features as a control. See [the four-arm experiment](docs/tree_distance_factorial.md).
