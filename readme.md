@@ -434,3 +434,8 @@ See [the method and theoretical limitations](docs/fsw_grip.md).
 matrices using exact assignment with blank-tree padding and unnormalized costs.
 It includes per-depth CPU timing probes, memory-mapped arrays, and row checkpoints.
 See [the distance definition and restart protocol](docs/exact_tree_distance.md).
+
+`src.tree_distance_analysis.analyze_tree_distances` reuses those matrices for
+validation k-NN, class recalls, and exact-degree-matched ranking diagnostics.
+It compares raw features, GRIP's propagated features, and a degree-only control
+without test-label access. See [the experiment protocol](docs/tree_distance_analysis.md).
