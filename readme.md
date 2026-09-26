@@ -478,3 +478,7 @@ Jacobian features from the same frozen networks, varying width, initialization
 ensembles and projection counts. Independent sketches and small-node exact
 Jacobian audits separate approximation error from CE preservation. All saved
 student architectures remain included. See [protocol and compute requirements](docs/empirical_ntk_study.md).
+
+`src.ntk_readout_study.run_readout_study` compares pre-readout features, exact
+readout-only NTK and the full NTK on those same cached network initializations.
+See [the decomposition and architecture-specific features](docs/ntk_readout_study.md).

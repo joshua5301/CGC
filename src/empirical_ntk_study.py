@@ -42,7 +42,7 @@ def make_network(x, edges, architecture, width, outputs, seed):
     return model
 
 
-def sketch_grams(model, x, edges, ids, projections, seed, callback=None):
+def sketch_grams(model, x, edges, ids, projections, seed, callback=None, exclude_names=()):
     names, parameters = zip(*model.named_parameters())
     generator = torch.Generator(device=x.device).manual_seed(seed)
 
@@ -53,6 +53,8 @@ def sketch_grams(model, x, edges, ids, projections, seed, callback=None):
     for count in tqdm(range(1, max(projections) + 1), desc='Jacobian projections', leave=False):
         direction = tuple(torch.randint(0, 2, p.shape, device=p.device, generator=generator).to(p.dtype) * 2 - 1
                           for p in parameters)
+        direction = tuple(torch.zeros_like(v) if name in exclude_names else v
+                          for name, v in zip(names, direction))
         _, product = torch.autograd.functional.jvp(output, parameters, direction, create_graph=False)
         blocks.append(product.detach())
         if count in projections:
