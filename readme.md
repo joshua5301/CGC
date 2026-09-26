@@ -472,3 +472,9 @@ two-layer ReLU GCN NTK and NNGP feature distances with the frozen GCN/SAGE/GIN
 student baselines. It can reuse all eight candidates from the preceding local
 CE experiment. Explicit kernel features and reconstruction diagnostics are saved.
 See [architecture, derivation and Colab verification](docs/gcn_kernel_features.md).
+
+`src.empirical_ntk_study.run_empirical_ntk_study` pairs forward features and
+Jacobian features from the same frozen networks, varying width, initialization
+ensembles and projection counts. Independent sketches and small-node exact
+Jacobian audits separate approximation error from CE preservation. All saved
+student architectures remain included. See [protocol and compute requirements](docs/empirical_ntk_study.md).

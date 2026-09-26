@@ -122,3 +122,21 @@ def test_saved_pipeline_uses_disjoint_nodes_and_scale_invariant_scores(tmp_path)
     same = analytic['summary'][analytic['summary'].method.isin(report['methods'])].sort_values(
         ['model', 'method', 'selection', 'cutoff'])
     np.testing.assert_allclose(old.ce_mean_mean, same.ce_mean_mean, atol=1e-12)
+    from src.empirical_ntk_study import run_empirical_ntk_study, plot_empirical_ntk_study
+    options = dict(architectures=('gcn',), widths=(4,), network_seeds=(5000, 5001),
+                   ensemble_sizes=(1, 2), projections=(2, 4), sketch_seeds=(6000, 7000),
+                   outputs=2, audit_nodes=2, device='cpu')
+    deep = run_empirical_ntk_study(report['folder'], x, edges, **options)
+    assert len(deep['metadata']) == 10
+    assert len(deep['exact_audit']) == 4
+    assert set(deep['ensemble_agreement'].family) == {'rf', 'ntk'}
+    original = deep['summary'][deep['summary'].method.isin(report['methods'])].sort_values(
+        ['model', 'method', 'selection', 'cutoff'])
+    np.testing.assert_allclose(old.ce_mean_mean, original.ce_mean_mean, atol=1e-12)
+    import src.empirical_ntk_study as study_module
+    from unittest.mock import patch
+    with patch.object(study_module, 'make_network', side_effect=RuntimeError('Must reuse cache')):
+        repeated = run_empirical_ntk_study(report['folder'], x, edges, **options)
+    np.testing.assert_allclose(deep['summary'].ce_mean_mean, repeated['summary'].ce_mean_mean)
+    for figure in plot_empirical_ntk_study(deep, k=1):
+        plt.close(figure)
