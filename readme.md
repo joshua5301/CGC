@@ -448,3 +448,9 @@ features as a control. See [the four-arm experiment](docs/tree_distance_factoria
 GraphSAGE and GIN output preservation after training on matched random subsets
 of training labels. It uses scale-invariant local/tail diagnostics without
 validation/test labels. See [the protocol](docs/gnn_distance_probe.md).
+
+`src.node_distance_comparison.compare_node_distances` reuses saved student
+outputs to compare S²X, multiscale propagation, exact probability OT, and
+neighborhood kernel mean embeddings. It reports mass-weighted CE preservation,
+paired differences, fixed-representative controls, and plots without retraining.
+See [the four-distance comparison](docs/node_distance_comparison.md).
