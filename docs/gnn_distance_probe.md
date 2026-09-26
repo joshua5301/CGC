@@ -128,3 +128,14 @@ previous experiment. It may overlap student supervision drawn from all nodes;
 the graph, not a held-out student-generalization score. Unlike the original
 hard-label protocol, validation labels ARE used for teacher gamma selection.
 Saved-output diagnostics work unchanged and do not retrain any model.
+
+`fit_gcn_probe_teacher` provides an alternative two-layer GCN teacher on raw
+features and the original graph. It trains with uniform CE on original train
+labels and selects checkpoints by validation accuracy, breaking ties by lower
+validation CE and then earlier epoch. Hyperparameters and seed are fixed;
+there is no kernel gamma in this teacher. All-node probabilities use T=1,
+without overwriting original training nodes. The returned state dictionary
+and logits belong to the selected checkpoint, not the final epoch. Student
+sampling, initialization seeds, settings and distance caches remain unchanged.
+This removes dependence on the kernel teacher's S²X input, but a GCN teacher
+still introduces its own architectural bias; it is not architecture-neutral.
