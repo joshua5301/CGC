@@ -2,7 +2,7 @@ import copy
 
 import torch
 
-from src.convex_representatives import convex_features, fit_convex_representatives, identity_hidden, median_weights
+from src.convex_representatives import convex_features, fit_convex_representatives, identity_hidden, median_weights, reconstruct_raw_partition
 from src.empirical_ntk_study import make_network
 from src.ntk_readout_study import readout_features
 from src.partition import geometric_medians
@@ -54,3 +54,20 @@ def test_reconstruction_improves_without_changing_teacher():
     assert bool((result['weights'] >= 0).all())
     for name, p in model.state_dict().items():
         torch.testing.assert_close(p, original[name])
+
+
+def test_sweep_reconstructs_raw_inputs_without_changing_partition_labels():
+    raw = torch.tensor([[0., 0., 1.], [2., 0., 1.], [0., 2., 1.],
+                        [4., 4., 2.], [6., 4., 2.], [4., 6., 2.]])
+    model = make_network(raw, torch.empty(2, 0, dtype=torch.long), 'gcn', 2, 2, 0)
+    state = dict(assignment=torch.tensor([0, 0, 0, 1, 1, 1]), nodes=2,
+                 metric_centers=torch.tensor([[.5, .8], [.7, .2]]),
+                 y=torch.tensor([[.8, .2], [.1, .9]]))
+    original = {key: value.clone() if isinstance(value, torch.Tensor) else value for key, value in state.items()}
+    result, history = reconstruct_raw_partition(model, raw, state, steps=10)
+    assert result['x'].shape == (2, 3)
+    assert result['reconstruction_final'] <= result['reconstruction_initial'] + 1e-5
+    torch.testing.assert_close(result['x'], convex_features(raw.double(), state['assignment'], result['convex_weights'], 2).float())
+    for key in ('assignment', 'metric_centers', 'y'):
+        torch.testing.assert_close(state[key], original[key])
+    assert len(history) == 2

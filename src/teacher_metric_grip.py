@@ -63,7 +63,12 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                             search_seeds=(0, 1, 2), final_seeds=tuple(range(100, 110)),
                             grip_seed=1234, grip_steps=300, grip_init='kmeans',
                             epochs=1000, eval_every=10, hidden=256, device='cuda',
-                            gradient_projections=512, gradient_seeds=(6000, 7000), dataset='cora'):
+                            gradient_projections=512, gradient_seeds=(6000, 7000), dataset='cora',
+                            representative='s2x_median', reconstruction_steps=1000, reconstruction_lr=.05):
+    if representative not in ('s2x_median', 'raw_convex'):
+        raise ValueError('Require s2x_median or raw_convex representatives')
+    if representative == 'raw_convex' and (list(modes) != ['hidden'] or reconstruction_steps < 1 or reconstruction_lr <= 0):
+        raise ValueError('Raw convex reconstruction requires hidden mode and positive optimizer settings')
     if dataset not in ('cora', 'citeseer', 'arxiv') or (dataset, ratio) not in BUDGET:
         raise ValueError('Require a supported transductive dataset and condensation ratio')
     if set(space) != {'T', 'kl_weight', 'dropout', 'lr', 'weight_decay'} or any(not v for v in space.values()):
@@ -116,6 +121,10 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                   grip_seed=grip_seed, grip_steps=grip_steps, grip_init=grip_init,
                   realization='geometric_median_in_original_S2X', teacher_label_override=False,
                   torch=str(torch.__version__), pyg=str(torch_geometric.__version__), device=str(device))
+    if representative == 'raw_convex':
+        config['realization'] = 'within_cluster_raw_convex'
+        config['reconstruction'] = dict(steps=reconstruction_steps, lr=reconstruction_lr, optimizer='Adam',
+                                       initialization='raw_geometric_median', selection='lowest_hidden_reconstruction_error')
     if 'full_gradient' in modes:
         from src.teacher_gradient_features import full_gradient_features
 
@@ -139,7 +148,14 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
                           kl_weight=params['kl_weight'], seed=grip_seed, iters=grip_steps,
                           init=grip_init, return_diagnostics=True)
         state['metric_centers'] = state['x']
-        state['x'] = state['x'] if mode == 's2x' else realize_partition(h, state).cpu()
+        if representative == 'raw_convex':
+            from src.convex_representatives import reconstruct_raw_partition
+
+            reconstruction, history = reconstruct_raw_partition(model, tx, state, reconstruction_steps, reconstruction_lr)
+            state.update(reconstruction)
+            history.to_csv(folder / f'reconstruction_{key}.csv', index=False)
+        else:
+            state['x'] = state['x'] if mode == 's2x' else realize_partition(h, state).cpu()
         if str(device).startswith('cuda'):
             torch.cuda.synchronize()
         state['partition_seconds'] = time.perf_counter() - started
@@ -185,13 +201,15 @@ def run_teacher_metric_grip(teacher_run, output_dir, space, ratio=.026,
             mode_rows.append(record)
         frame = pd.DataFrame(mode_rows)
         repeats.extend(mode_rows)
-        rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, nodes=state['nodes'],
+        rows.append(dict(dataset=dataset, ratio=ratio, mode=mode, representative=representative, nodes=state['nodes'],
                          requested_nodes=config['requested_nodes'], **best.params,
                          search_val=100 * best.value, final_val=frame.validation.mean(),
                          final_val_std=frame.validation.std(ddof=0), test_mean=frame.test.mean(),
                          test_std=frame.test.std(ddof=0), J_initial=state['initial_J'],
                          J_final=state['final_J'], converged=state['converged'],
                          partition_seconds=state['partition_seconds']))
+        if representative == 'raw_convex':
+            rows[-1].update({key: state[key] for key in ('reconstruction_initial', 'reconstruction_final', 'reconstruction_best_step')})
     summary, detail = pd.DataFrame(rows), pd.DataFrame(repeats)
     summary.to_csv(folder / 'summary.csv', index=False)
     detail.to_csv(folder / 'final_seeds.csv', index=False)

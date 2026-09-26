@@ -45,7 +45,8 @@ def median_weights(h, assignment, clusters):
     return weights / total[assignment]
 
 
-def fit_convex_representatives(model, h, assignment, targets, baseline, steps=1000, lr=.05, log_every=10):
+def fit_convex_representatives(model, h, assignment, targets, baseline, steps=1000, lr=.05, log_every=10,
+                               progress=True):
     if steps < 1 or lr <= 0 or log_every < 1:
         raise ValueError('Require positive steps, learning rate and logging interval')
     model.eval().requires_grad_(False)
@@ -60,7 +61,7 @@ def fit_convex_representatives(model, h, assignment, targets, baseline, steps=10
     optimizer = torch.optim.Adam([scores], lr=lr)
     best_loss, best_weights, best_step = float('inf'), None, 0
     history = []
-    for step in tqdm(range(steps + 1), desc='Within-cluster convex reconstruction'):
+    for step in tqdm(range(steps + 1), desc='Within-cluster convex reconstruction', disable=not progress):
         weights = cluster_softmax(scores, assignment, clusters)
         representatives = convex_features(h, assignment, weights, clusters).float()
         loss = (identity_hidden(model, representatives) - targets).square().sum(1).mean()
@@ -78,6 +79,19 @@ def fit_convex_representatives(model, h, assignment, targets, baseline, steps=10
     final = convex_features(h, assignment, best_weights, clusters).float()
     return dict(x=final.cpu(), weights=best_weights.cpu(), best_step=best_step,
                 history=pd.DataFrame(history))
+
+
+def reconstruct_raw_partition(model, raw, state, steps=1000, lr=.05):
+    assignment = state['assignment'].to(raw.device)
+    targets = state['metric_centers'].to(raw.device)
+    initial = geometric_medians(raw.double(), assignment, state['nodes']).float()
+    fitted = fit_convex_representatives(model, raw, assignment, targets, initial, steps, lr, progress=False)
+    with torch.no_grad():
+        before = float((identity_hidden(model, initial) - targets).square().sum(1).mean())
+        after = float((identity_hidden(model, fitted['x'].to(raw.device)) - targets).square().sum(1).mean())
+    return dict(x=fitted['x'], initial_raw_x=initial.cpu(), convex_weights=fitted['weights'],
+                reconstruction_initial=before, reconstruction_final=after,
+                reconstruction_best_step=fitted['best_step']), fitted['history']
 
 
 def run_convex_representative_study(source_dir, teacher_run, output_dir, steps=1000, lr=.05,

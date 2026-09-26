@@ -81,3 +81,22 @@ Cora teacher folders and sweep hashes remain compatible. Partitions use all
 nodes and teacher probabilities; student supervision remains uniform CE on
 the representatives, with original-graph validation/test evaluation. No dense
 all-pairs distance matrix is formed.
+
+## Full grid with raw convex representatives
+
+Set representative='raw_convex', modes=['hidden'], reconstruction_steps=1000,
+and reconstruction_lr=0.05. Every distinct (T, kl_weight) case recomputes teacher
+soft labels and the GRIP partition, then optimizes a within-cluster convex
+combination of original input X toward the teacher hidden centers. It starts
+from raw-space geometric medians. The representative labels remain the mean
+teacher probabilities of the resulting clusters. The best Adam iterate is
+selected only by hidden reconstruction error.
+
+These reconstructed representatives are used inside the validation objective,
+not merely after selection. Student dropout/lr/weight-decay combinations share
+the reconstruction cache when T and KL weight match. Final student seeds remain
+disjoint from search seeds and test is evaluated only after configuration
+selection. Per-partition histories and coefficients are saved; summary includes
+initial/final reconstruction error and selected step. Old median experiment
+hashes are unchanged. Expanded search ranges make comparisons to older winners
+descriptive; strict search-budget comparisons require matching grids.
