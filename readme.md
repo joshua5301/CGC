@@ -443,3 +443,8 @@ without test-label access. See [the experiment protocol](docs/tree_distance_anal
 `src.tree_distance_factorial.run_tree_distance_factorial` compares original/L2
 features crossed with sum/mean exact OT at depth one, including normalized raw
 features as a control. See [the four-arm experiment](docs/tree_distance_factorial.md).
+
+`src.gnn_distance_probe.run_gnn_distance_probe` compares distances by GCN,
+GraphSAGE and GIN output preservation after training on matched random subsets
+of training labels. It uses scale-invariant local/tail diagnostics without
+validation/test labels. See [the protocol](docs/gnn_distance_probe.md).
